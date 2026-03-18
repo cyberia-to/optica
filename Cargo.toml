@@ -1,10 +1,12 @@
 [package]
 name = "optica"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75"
-description = "Knowledge graph publisher — transforms markdown with wiki-links into a fast static site"
+description = "A fast, Rust-native static site publisher for the cyber knowledge graph"
 license = "MIT"
+repository = "https://github.com/cybercongress/cyber"
+homepage = "https://github.com/cybercongress/cyber"
 readme = "README.md"
 keywords = ["markdown", "static-site-generator", "knowledge-graph", "wiki", "cyber"]
 categories = ["command-line-utilities", "web-programming", "text-processing"]
