@@ -8,6 +8,8 @@ optica build .        # generate static site
 optica check .        # validate links, find orphans
 ```
 
+live example: [cyber.page](https://cyber.page/) — 12K pages, 10 subgraphs, built with optica
+
 ## what it does
 
 point optica at any directory. markdown files with `[[wiki-links]]` become navigable pages. all other files — `.rs`, `.toml`, `.nu`, `.json`, images, binaries — become graph nodes with syntax highlighting, metadata, and backlinks. the entire repo is the knowledge graph.
