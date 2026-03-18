@@ -1,6 +1,6 @@
 # 🔭 optica
 
-knowledge graph publisher — transforms a directory of markdown files with wiki-links into a fast, navigable static site
+knowledge graph publisher — transforms a directory of files into a fast, navigable static site. markdown pages with wiki-links are the primary content. all other files (source code, configs, data, binaries) become graph nodes with syntax-highlighted previews
 
 ```
 optica serve .        # dev server with live reload
@@ -10,7 +10,7 @@ optica check .        # validate links, find orphans
 
 ## what it does
 
-drop markdown files with `[[wiki-links]]` into a directory. optica reads them, resolves links, computes ranking, and produces a static website with search, graph visualization, and dimensional navigation.
+point optica at any directory. markdown files with `[[wiki-links]]` become navigable pages. all other files — `.rs`, `.toml`, `.nu`, `.json`, images, binaries — become graph nodes with syntax highlighting, metadata, and backlinks. the entire repo is the knowledge graph.
 
 ```
 your-project/
