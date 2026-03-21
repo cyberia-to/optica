@@ -81,15 +81,12 @@ pub fn discover_subgraphs(pages: &[ParsedPage], input_dir: &Path) -> Vec<Subgrap
             DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
         exclude_patterns.extend(custom_excludes);
 
-        // Derive subgraph name from the declaring page's id (filename-based)
+        // Use the declaring page's full id as the subgraph name.
         // e.g., page id "trident" → name "trident"
-        // For namespaced pages like "cyber/foo" → use just the last component
-        let name = page
-            .id
-            .rsplit('/')
-            .next()
-            .unwrap_or(&page.id)
-            .to_string();
+        // e.g., page id "cyber/context" → name "cyber/context"
+        // This preserves namespace nesting: subgraph pages appear
+        // under the same namespace as the declaring page.
+        let name = page.id.clone();
 
         decls.push(SubgraphDecl {
             name,

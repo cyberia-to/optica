@@ -209,7 +209,7 @@ fn watch_and_rebuild_loop(config: &SiteConfig, build_version: &Arc<AtomicU64>) -
             for file in &subgraph_files {
                 if file.kind == crate::scanner::FileKind::Page {
                     let mut page = crate::parser::parse_file(file)?;
-                    if page.id == decl.declaring_page_id {
+                    if page.id == decl.declaring_page_id || page.id == crate::parser::slugify_page_name(&decl.declaring_page_id) {
                         if let Some(ref dp) = declaring_page {
                             page.meta.tags = dp.meta.tags.clone();
                             page.meta.aliases = dp.meta.aliases.clone();
@@ -610,7 +610,7 @@ fn incremental_rebuild(
                 for file in &subgraph_files {
                     if file.kind == crate::scanner::FileKind::Page {
                         let mut page = crate::parser::parse_file(file)?;
-                        if page.id == decl.declaring_page_id {
+                        if page.id == decl.declaring_page_id || page.id == crate::parser::slugify_page_name(&decl.declaring_page_id) {
                             if let Some(ref dp) = declaring_page {
                                 page.meta.tags = dp.meta.tags.clone();
                                 page.meta.aliases = dp.meta.aliases.clone();

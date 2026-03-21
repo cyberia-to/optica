@@ -262,9 +262,10 @@ fn build_site(config: &SiteConfig, quiet: bool) -> Result<()> {
                     continue; // non-md handled below
                 };
 
-                // If this is the repo-root README (id == subgraph name == declaring page id),
+                // If this is the repo-root README (id matches declaring page),
                 // merge the declaring page's metadata so tags/aliases/stake etc. are preserved.
-                if page.id == decl.declaring_page_id {
+                let decl_slug = optica::parser::slugify_page_name(&decl.declaring_page_id);
+                if page.id == decl.declaring_page_id || page.id == decl_slug {
                     if let Some(ref decl_page) = declaring_page {
                         page.meta.tags = decl_page.meta.tags.clone();
                         page.meta.aliases = decl_page.meta.aliases.clone();
@@ -517,7 +518,7 @@ fn check_site(config: &SiteConfig) -> Result<()> {
             for file in &subgraph_files {
                 if file.kind == optica::scanner::FileKind::Page {
                     let mut page = optica::parser::parse_file(file)?;
-                    if page.id == decl.declaring_page_id {
+                    if page.id == decl.declaring_page_id || page.id == optica::parser::slugify_page_name(&decl.declaring_page_id) {
                         if let Some(ref dp) = declaring_page {
                             page.meta.tags = dp.meta.tags.clone();
                             page.meta.aliases = dp.meta.aliases.clone();
