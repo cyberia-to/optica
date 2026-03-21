@@ -1,8 +1,26 @@
+use std::collections::HashMap;
 use crate::config::SiteConfig;
 use crate::graph::PageStore;
-use crate::parser::ParsedPage;
+use crate::parser::{PageId, ParsedPage};
 use crate::render::toc::{self, TocEntry};
 use minijinja::Value;
+
+/// Pre-computed index: base_name → list of page IDs that share that base name.
+/// Built once, used O(1) per page instead of O(n) scan.
+pub type PeerIndex = HashMap<String, Vec<PageId>>;
+
+pub fn build_peer_index(store: &PageStore, config: &SiteConfig) -> PeerIndex {
+    let mut index: HashMap<String, Vec<PageId>> = HashMap::new();
+    for (page_id, page) in &store.pages {
+        if !PageStore::is_page_public(page, &config.content) {
+            continue;
+        }
+        let base = page.meta.title.rsplit('/').next()
+            .unwrap_or(&page.meta.title).to_lowercase();
+        index.entry(base).or_default().push(page_id.clone());
+    }
+    index
+}
 
 /// Resolve nav menu items: convert page names to URLs, use page icons when available.
 /// When `nav.menu_tag` is set, auto-generates menu from pages that have that tag.
@@ -220,6 +238,7 @@ pub fn build_page_context(
     toc_entries: &[TocEntry],
     store: &PageStore,
     config: &SiteConfig,
+    peer_index: &PeerIndex,
 ) -> Value {
     let backlinks = store.get_backlinks(&page.id);
     let backlink_data: Vec<Value> = backlinks
@@ -345,31 +364,30 @@ pub fn build_page_context(
 
     // Dimensional peers: pages with the same base name in different namespaces.
     // e.g., "truth" (root) and "cyber/truth" are dimensional peers.
+    // Uses pre-computed peer_index for O(1) lookup instead of O(n) scan.
     let base_name = page.meta.title.rsplit('/').next()
         .unwrap_or(&page.meta.title).to_lowercase();
-    let mut dimensional_peers: Vec<Value> = store.pages.values()
-        .filter(|p| {
-            p.id != page.id
-                && p.meta.title.rsplit('/').next()
-                    .unwrap_or(&p.meta.title)
-                    .to_lowercase() == base_name
-                && PageStore::is_page_public(p, &config.content)
+    let mut dimensional_peers: Vec<Value> = peer_index
+        .get(&base_name)
+        .map(|ids| {
+            ids.iter()
+                .filter(|id| **id != page.id)
+                .filter_map(|id| store.pages.get(id))
+                .map(|peer| {
+                    let excerpt = generate_excerpt(&peer.content_md, 300);
+                    let depth = peer.meta.title.matches('/').count();
+                    minijinja::context! {
+                        title => peer.meta.title.clone(),
+                        path => format!("/{}", peer.id),
+                        icon => peer.meta.icon.clone(),
+                        namespace => peer.namespace.clone(),
+                        html_content => excerpt,
+                        depth => depth,
+                    }
+                })
+                .collect()
         })
-        .map(|peer| {
-            let peer_render = super::transform::render_markdown(
-                &peer.content_md, store, &config.style.code.theme,
-            );
-            let depth = peer.meta.title.matches('/').count();
-            minijinja::context! {
-                title => peer.meta.title.clone(),
-                path => format!("/{}", peer.id),
-                icon => peer.meta.icon.clone(),
-                namespace => peer.namespace.clone(),
-                html_content => peer_render.html,
-                depth => depth,
-            }
-        })
-        .collect();
+        .unwrap_or_default();
     // Sort: when viewing a namespaced page, root peer comes first (depth 0).
     // When viewing root, most specific peer comes first (highest depth).
     let current_depth = page.meta.title.matches('/').count();

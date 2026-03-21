@@ -35,8 +35,9 @@ pub fn render_single_page(
     config: &SiteConfig,
     env: &minijinja::Environment<'_>,
 ) -> Result<RenderedPage> {
+    let peer_index = context::build_peer_index(store, config);
     let render_result = transform::render_markdown(&page.content_md, store, &config.style.code.theme);
-    let ctx = context::build_page_context(page, &render_result.html, &render_result.toc, store, config);
+    let ctx = context::build_page_context(page, &render_result.html, &render_result.toc, store, config, &peer_index);
     let template_name = match page.kind {
         crate::parser::PageKind::Journal => "journal.html",
         crate::parser::PageKind::Page | crate::parser::PageKind::File => "page.html",
@@ -62,6 +63,9 @@ pub fn render_cached(
     dirty_ids: Option<&HashSet<PageId>>,
 ) -> Result<Vec<RenderedPage>> {
     let env = templates::setup_environment(config.build.template_dir.as_deref(), config)?;
+
+    // Pre-compute dimensional peer index once — O(n) instead of O(n²)
+    let peer_index = context::build_peer_index(store, config);
 
     let mut rendered = Vec::new();
 
@@ -101,6 +105,7 @@ pub fn render_cached(
             &render_result.toc,
             store,
             config,
+            &peer_index,
         );
 
         // Render through template
@@ -251,6 +256,7 @@ fn render_index(
         let root_id = crate::parser::slugify_page_name(root_page_name);
         if let Some(page) = store.pages.get(&root_id) {
             if PageStore::is_page_public(page, &config.content) {
+                let peer_index = context::build_peer_index(store, config);
                 let render_result = transform::render_markdown(&page.content_md, store, &config.style.code.theme);
                 let ctx = context::build_page_context(
                     page,
@@ -258,6 +264,7 @@ fn render_index(
                     &render_result.toc,
                     store,
                     config,
+                    &peer_index,
                 );
                 let tmpl = env.get_template("page.html")?;
                 return Ok(tmpl.render(&ctx)?);
