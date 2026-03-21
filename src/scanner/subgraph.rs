@@ -81,12 +81,11 @@ pub fn discover_subgraphs(pages: &[ParsedPage], input_dir: &Path) -> Vec<Subgrap
             DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
         exclude_patterns.extend(custom_excludes);
 
-        // Use the declaring page's full id as the subgraph name.
-        // e.g., page id "trident" → name "trident"
-        // e.g., page id "cyber/context" → name "cyber/context"
-        // This preserves namespace nesting: subgraph pages appear
-        // under the same namespace as the declaring page.
-        let name = page.id.clone();
+        // Use the declaring page's title (original name before slugification)
+        // as the subgraph name to preserve namespace nesting.
+        // e.g., title "trident" → name "trident"
+        // e.g., title "cyber/context" → name "cyber/context"
+        let name = page.meta.title.to_lowercase();
 
         decls.push(SubgraphDecl {
             name,
