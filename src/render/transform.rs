@@ -252,6 +252,10 @@ pub fn render_markdown(markdown: &str, store: &PageStore, _code_theme: &str) -> 
         html = restore_math_blocks(&html, &math_blocks);
     }
 
+    // Post-process: resolve [[wikilinks]] inside <code> and <pre> blocks.
+    // Comrak does not parse wikilinks in code blocks, so we handle them here.
+    html = resolve_wikilinks_in_code(&html, store);
+
     RenderResult {
         html,
         toc: toc_entries,
@@ -293,6 +297,40 @@ lazy_static::lazy_static! {
 
 /// Resolve {{embed [[Page]]}} in markdown.
 /// `depth` prevents infinite recursion for circular embeds.
+/// Resolve `[[wikilinks]]` inside rendered HTML code blocks.
+/// Comrak does not parse wikilinks in `<code>` / `<pre>` elements,
+/// so this post-processes the final HTML to linkify known page names.
+fn resolve_wikilinks_in_code(html: &str, store: &PageStore) -> String {
+    lazy_static::lazy_static! {
+        static ref CODE_WIKILINK: Regex = Regex::new(r"\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]").unwrap();
+    }
+
+    CODE_WIKILINK.replace_all(html, |caps: &regex::Captures| {
+        let page_name = &caps[1];
+        let display = caps.get(2).map(|m| m.as_str()).unwrap_or_else(|| {
+            // Show last path segment by default
+            page_name.rsplit('/').next().unwrap_or(page_name)
+        });
+        let slug = slugify_page_name(page_name);
+        let resolved = if store.pages.contains_key(&slug) {
+            slug.clone()
+        } else if let Some(canonical) = store.alias_map.get(&slug) {
+            canonical.clone()
+        } else {
+            slug.clone()
+        };
+        let class = if store.pages.contains_key(&resolved) || store.alias_map.contains_key(&slug) {
+            "internal-link"
+        } else {
+            "internal-link stub-link"
+        };
+        format!(
+            r#"<a href="/{}" class="{}" data-page="{}">{}</a>"#,
+            resolved, class, resolved, display
+        )
+    }).to_string()
+}
+
 fn resolve_embeds_and_refs(markdown: &str, store: &PageStore, depth: usize) -> String {
     if depth > 3 {
         return markdown.to_string();
