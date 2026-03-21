@@ -657,6 +657,55 @@ fn incremental_rebuild(
             }
         }
         all_parsed.extend(cache.subgraph_pages.clone());
+
+        // Generate directory index pages for intermediate dirs without README
+        let existing_ids: std::collections::HashSet<String> = all_parsed
+            .iter()
+            .map(|p| p.id.clone())
+            .collect();
+        let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for page in all_parsed.iter() {
+            if let Some(ref ns) = page.namespace {
+                for decl in &subgraph_decls {
+                    if ns.starts_with(&decl.name) {
+                        let after_root = ns.strip_prefix(&format!("{}/", decl.name)).unwrap_or("");
+                        let mut accumulated = decl.name.clone();
+                        for segment in after_root.split('/').filter(|s| !s.is_empty()) {
+                            accumulated = format!("{}/{}", accumulated, segment);
+                            seen_dirs.insert(accumulated.clone());
+                        }
+                    }
+                }
+            }
+        }
+        for dir_name in &seen_dirs {
+            let dir_slug = crate::parser::slugify_page_name(dir_name);
+            if !existing_ids.contains(&dir_slug) {
+                let short_name = dir_name.rsplit('/').next().unwrap_or(dir_name);
+                all_parsed.push(crate::parser::ParsedPage {
+                    id: dir_slug,
+                    meta: crate::parser::PageMeta {
+                        title: dir_name.clone(),
+                        properties: std::collections::HashMap::new(),
+                        tags: vec![],
+                        public: Some(true),
+                        aliases: vec![],
+                        date: None,
+                        icon: None,
+                        menu_order: None,
+                        stake: None,
+                    },
+                    kind: crate::parser::PageKind::Page,
+                    source_path: std::path::PathBuf::new(),
+                    namespace: {
+                        dir_name.rsplitn(2, '/').nth(1).map(|s| s.to_string())
+                    },
+                    subgraph: None,
+                    content_md: format!("# {}\n", short_name),
+                    outgoing_links: vec![],
+                });
+            }
+        }
     }
 
     // Step 3: Detect content, meta, and link changes BEFORE building graph (cheap hash comparison).
