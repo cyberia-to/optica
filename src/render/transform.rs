@@ -302,7 +302,10 @@ lazy_static::lazy_static! {
 /// so this post-processes the final HTML to linkify known page names.
 fn resolve_wikilinks_in_code(html: &str, store: &PageStore) -> String {
     lazy_static::lazy_static! {
-        static ref CODE_WIKILINK: Regex = Regex::new(r"\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]").unwrap();
+        // Match [[page]] or [[page￿display]] (PIPE_PLACEHOLDER) or [[page|display]]
+        static ref CODE_WIKILINK: Regex = Regex::new(
+            &format!(r"\[\[([^\]\|{pp}]+?)(?:[|{pp}]([^\]]+?))?\]\]", pp = PIPE_PLACEHOLDER)
+        ).unwrap();
     }
 
     CODE_WIKILINK.replace_all(html, |caps: &regex::Captures| {
