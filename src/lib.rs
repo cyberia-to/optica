@@ -7,6 +7,7 @@ pub mod compile;
 pub mod config;
 pub mod graph;
 pub mod lunar;
+pub mod model_query;
 pub mod output;
 pub mod parser;
 pub mod query;

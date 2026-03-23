@@ -110,6 +110,24 @@ enum Commands {
         #[arg(short, long, default_value = "100")]
         k: usize,
     },
+
+    /// Query the compiled model — pure graph intelligence
+    Query {
+        /// Path to compiled model file
+        #[arg(default_value = "bostrom_model.bin")]
+        model: PathBuf,
+        /// Text query
+        query: String,
+        /// Path to CID text index JSON
+        #[arg(long)]
+        index: Option<PathBuf>,
+        /// Number of neighbors
+        #[arg(short, long, default_value = "15")]
+        k: usize,
+        /// Query mode: neighbors, role, or full (default)
+        #[arg(long, default_value = "full")]
+        mode: String,
+    },
 }
 
 /// Try to extract port from a URL like "http://localhost:8888"
@@ -222,6 +240,26 @@ fn main() -> Result<()> {
                 stakes.as_deref(),
                 &output,
                 k,
+            )?;
+        }
+        Commands::Query {
+            model,
+            query,
+            index,
+            k,
+            mode,
+        } => {
+            let qmode = match mode.as_str() {
+                "neighbors" => optica::model_query::QueryMode::Neighbors,
+                "role" => optica::model_query::QueryMode::Role,
+                _ => optica::model_query::QueryMode::Full,
+            };
+            optica::model_query::run_query(
+                &model,
+                &query,
+                index.as_deref(),
+                k,
+                qmode,
             )?;
         }
     }
