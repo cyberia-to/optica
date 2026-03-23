@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 use crate::parser::{PageId, ParsedPage};
 use crate::scanner::{DiscoveredFile, FileKind};
 use anyhow::Result;

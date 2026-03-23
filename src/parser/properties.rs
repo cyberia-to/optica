@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 use crate::parser::PageMeta;
 use chrono::NaiveDate;
 use regex::Regex;

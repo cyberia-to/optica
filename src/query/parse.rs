@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 /// AST for Logseq simple query expressions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum QueryExpr {

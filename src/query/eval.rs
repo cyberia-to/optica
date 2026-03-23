@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 use crate::graph::PageStore;
 use crate::parser::{slugify_page_name, PageId};
 use std::collections::HashSet;

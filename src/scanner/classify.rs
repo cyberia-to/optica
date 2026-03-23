@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 use std::path::Path;
 
 /// Extract page name from file path relative to pages directory.

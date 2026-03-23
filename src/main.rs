@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;

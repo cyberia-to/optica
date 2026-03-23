@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 use crate::config::SiteConfig;
 use crate::graph::PageStore;
 use anyhow::Result;

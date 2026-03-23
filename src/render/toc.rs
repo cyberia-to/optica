@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 use comrak::nodes::{AstNode, NodeValue};
 use serde::Serialize;
 

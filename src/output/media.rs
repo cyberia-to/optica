@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 use crate::scanner::DiscoveredFiles;
 use anyhow::Result;
 use std::fs;

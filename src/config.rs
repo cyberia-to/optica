@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 

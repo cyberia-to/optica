@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 //! Lunar Machine Time (LMT) — DD.MM.YY format.
 //!
 //! DD = lunar day (1–30) within current synodic month

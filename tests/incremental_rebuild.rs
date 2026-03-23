@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 //! Integration tests for the full build pipeline and incremental rebuild behavior.
 //!
 //! Each test creates a temporary directory with a minimal graph, runs the full

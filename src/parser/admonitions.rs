@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 /// Transform admonition blocks into HTML divs.
 /// Logseq uses org-mode-style #+BEGIN_X...#+END_X blocks.
 pub fn transform_admonitions(content: &str) -> String {

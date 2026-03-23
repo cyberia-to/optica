@@ -1,3 +1,8 @@
+// ---
+// tags: optica, rust
+// crystal-type: source
+// crystal-domain: comp
+// ---
 use super::PageStore;
 
 pub fn build_namespace_tree(store: &mut PageStore) {
