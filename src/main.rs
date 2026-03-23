@@ -95,6 +95,21 @@ enum Commands {
         #[arg(default_value = ".")]
         input: PathBuf,
     },
+
+    /// Compile cyberlinks into graph-native transformer embeddings
+    Compile {
+        /// Path to cyberlinks JSONL file
+        input: PathBuf,
+        /// Path to neuron stakes JSON (optional)
+        #[arg(long)]
+        stakes: Option<PathBuf>,
+        /// Output path for embeddings
+        #[arg(short, long, default_value = "bostrom_model.bin")]
+        output: PathBuf,
+        /// Max singular vectors to compute
+        #[arg(short, long, default_value = "100")]
+        k: usize,
+    },
 }
 
 /// Try to extract port from a URL like "http://localhost:8888"
@@ -195,6 +210,19 @@ fn main() -> Result<()> {
         Commands::Check { input } => {
             let (_config_path, config) = resolve_config(&cli.config, &input);
             check_site(&config)?;
+        }
+        Commands::Compile {
+            input,
+            stakes,
+            output,
+            k,
+        } => {
+            optica::compile::run_compile(
+                &input,
+                stakes.as_deref(),
+                &output,
+                k,
+            )?;
         }
     }
 

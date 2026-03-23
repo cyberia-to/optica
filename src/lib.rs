@@ -3,6 +3,7 @@
 // crystal-type: source
 // crystal-domain: comp
 // ---
+pub mod compile;
 pub mod config;
 pub mod graph;
 pub mod lunar;
