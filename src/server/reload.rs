@@ -677,6 +677,13 @@ fn incremental_rebuild(
                     });
                 }
             }
+            // Mark all re-parsed subgraph pages as changed so the dirty
+            // detection at step 3 picks them up. Without this, subgraph page
+            // IDs are never in changed_page_ids and was_reparsed is always
+            // false — causing "Rebuilt 0/N pages" even when content changed.
+            for page in &new_subgraph_pages {
+                changed_page_ids.insert(page.id.clone());
+            }
             cache.subgraph_pages = new_subgraph_pages;
             cache.subgraph_repo_paths = new_repo_paths;
         } else {
