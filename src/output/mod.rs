@@ -77,9 +77,13 @@ pub fn write_output(
     for page in rendered {
         let file_path = output_dir.join(page.url_path.trim_start_matches('/'));
         if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).map_err(|e| {
+                anyhow::anyhow!("create_dir_all({}) for page '{}': {}", parent.display(), page.page_id, e)
+            })?;
         }
-        fs::write(&file_path, &page.html)?;
+        fs::write(&file_path, &page.html).map_err(|e| {
+            anyhow::anyhow!("write({}) for page '{}': {}", file_path.display(), page.page_id, e)
+        })?;
     }
 
     // Write static assets (default CSS/JS)

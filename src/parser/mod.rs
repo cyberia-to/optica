@@ -63,6 +63,14 @@ pub fn slugify_page_name(name: &str) -> PageId {
         if ch.is_alphanumeric() || ch == '$' || ch == '.' {
             result.push(ch);
             prev_hyphen = false;
+        } else if ch == '/' {
+            // Preserve path separators for namespace hierarchy
+            // Trim trailing hyphen before slash
+            if result.ends_with('-') {
+                result.pop();
+            }
+            result.push('/');
+            prev_hyphen = true; // prevents hyphen after slash
         } else if !prev_hyphen {
             result.push('-');
             prev_hyphen = true;
@@ -546,7 +554,7 @@ mod tests {
         );
         assert_eq!(
             slugify_page_name("projects/Cyber Valley"),
-            "projects-cyber-valley"
+            "projects/cyber-valley"
         );
         assert_eq!(slugify_page_name("2025-02-08"), "2025-02-08");
         assert_eq!(slugify_page_name("$BOOT"), "$boot");

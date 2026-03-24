@@ -103,6 +103,19 @@ pub fn discover_subgraphs(pages: &[ParsedPage], input_dir: &Path) -> Vec<Subgrap
     decls
 }
 
+/// Resolve the graph directory inside a subgraph repo, using the same
+/// fallback chain as the main scanner: root → graph → pages → repo root.
+fn resolve_subgraph_graph_dir(repo_path: &Path) -> PathBuf {
+    for name in &["root", "graph", "pages"] {
+        let dir = repo_path.join(name);
+        if dir.exists() {
+            return dir;
+        }
+    }
+    // No dedicated page directory — pages live at repo root
+    repo_path.to_path_buf()
+}
+
 /// Scan an external repository and return discovered files under the subgraph namespace.
 /// All files are collected; markdown files become Pages, everything else becomes Files.
 pub fn scan_subgraph(decl: &SubgraphDecl) -> Result<Vec<DiscoveredFile>> {
@@ -114,6 +127,8 @@ pub fn scan_subgraph(decl: &SubgraphDecl) -> Result<Vec<DiscoveredFile>> {
         );
         return Ok(vec![]);
     }
+
+    let graph_dir = resolve_subgraph_graph_dir(&decl.repo_path);
 
     // Build exclude glob set
     let mut builder = GlobSetBuilder::new();
@@ -162,7 +177,14 @@ pub fn scan_subgraph(decl: &SubgraphDecl) -> Result<Vec<DiscoveredFile>> {
             .unwrap_or(false);
 
         if is_md {
-            let name = subgraph_page_name(&path, &decl.repo_path, &decl.name);
+            // Pages inside graph_dir get names relative to graph_dir
+            // (strips the root/graph/pages prefix), others relative to repo root
+            let base = if path.starts_with(&graph_dir) {
+                &graph_dir
+            } else {
+                &decl.repo_path
+            };
+            let name = subgraph_page_name(&path, base, &decl.name);
             files.push(DiscoveredFile {
                 path,
                 kind: FileKind::Page,
