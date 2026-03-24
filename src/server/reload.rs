@@ -416,7 +416,23 @@ fn try_fast_path(
         return None;
     }
 
-    // Re-parse only the changed files
+    // Re-parse changed files into a temporary buffer BEFORE touching caches.
+    // If we detect structural changes (meta/links), we bail to incremental_rebuild —
+    // and the caches must still hold OLD hashes so incremental_rebuild correctly
+    // detects the changes. Updating caches before bail was the live-reload bug:
+    // incremental_rebuild would see updated hashes and think nothing changed.
+    struct PendingUpdate {
+        path: PathBuf,
+        mtime: SystemTime,
+        page: ParsedPage,
+        page_id: PageId,
+        new_content: u64,
+        new_meta: u64,
+        new_links: u64,
+        new_tags: u64,
+    }
+
+    let mut pending: Vec<PendingUpdate> = Vec::new();
     let mut dirty_ids: HashSet<PageId> = HashSet::new();
     let mut meta_changed = false;
     let mut links_changed = false;
@@ -433,43 +449,48 @@ fn try_fast_path(
             .unwrap_or(SystemTime::UNIX_EPOCH);
 
         let page_id = page.id.clone();
-
-        // Content hash
         let new_content = hash_str(&page.content_md);
+        let new_meta = hash_meta(&page);
+        let new_links = hash_links(&page);
+        let new_tags = hash_str(&page.meta.tags.join(","));
+
         if cache.content_hashes.get(&page_id).copied() != Some(new_content) {
             dirty_ids.insert(page_id.clone());
         }
-        cache.content_hashes.insert(page_id.clone(), new_content);
-
-        // Meta hash
-        let new_meta = hash_meta(&page);
         if cache.meta_hashes.get(&page_id).copied() != Some(new_meta) {
             dirty_ids.insert(page_id.clone());
             meta_changed = true;
         }
-        cache.meta_hashes.insert(page_id.clone(), new_meta);
-
-        // Link hash
-        let new_links = hash_links(&page);
         if cache.link_hashes.get(&page_id).copied() != Some(new_links) {
             dirty_ids.insert(page_id.clone());
             links_changed = true;
         }
-        cache.link_hashes.insert(page_id.clone(), new_links);
 
-        // Tag hash
-        let new_tags = hash_str(&page.meta.tags.join(","));
-        cache.tag_hashes.insert(page_id.clone(), new_tags);
-
-        // Update parse cache
-        cache.parse_cache.insert(path.clone(), (mtime, page));
+        pending.push(PendingUpdate {
+            path: path.clone(),
+            mtime,
+            page,
+            page_id,
+            new_content,
+            new_meta,
+            new_links,
+            new_tags,
+        });
     }
 
-    // If meta/links/tags changed, this is structural — bail to full rebuild
+    // If meta/links changed, this is structural — bail to full rebuild.
+    // Caches are UNTOUCHED so incremental_rebuild will correctly detect changes.
     if meta_changed || links_changed {
-        // Revert: the hashes were updated but we need full rebuild.
-        // The full path will recompute everything, so this is fine.
         return None;
+    }
+
+    // Commit: update caches now that we know we're staying on the fast path
+    for update in &pending {
+        cache.content_hashes.insert(update.page_id.clone(), update.new_content);
+        cache.meta_hashes.insert(update.page_id.clone(), update.new_meta);
+        cache.link_hashes.insert(update.page_id.clone(), update.new_links);
+        cache.tag_hashes.insert(update.page_id.clone(), update.new_tags);
+        cache.parse_cache.insert(update.path.clone(), (update.mtime, update.page.clone()));
     }
 
     if dirty_ids.is_empty() {
