@@ -71,11 +71,17 @@ pub fn serve(
                 let url_path_clean = url_path.split('?').next().unwrap_or(&url_path);
 
                 if url_path_clean == "/__reload" {
+                    // Parse client's last-known version from query string
+                    let client_version: Option<u64> = url_path
+                        .split('?')
+                        .nth(1)
+                        .and_then(|q| q.strip_prefix("v="))
+                        .and_then(|v| v.parse().ok());
                     // Handle SSE in a separate thread so the server keeps serving
                     let version = build_version.clone();
                     let is_running = running.clone();
                     std::thread::spawn(move || {
-                        handle_sse_reload(request, &version, &is_running);
+                        handle_sse_reload(request, &version, &is_running, client_version);
                     });
                 } else {
                     // Handle regular requests in a thread to keep the main loop responsive.
@@ -99,15 +105,46 @@ pub fn serve(
 
 /// SSE long-poll: wait for build_version to change, then send "reload" event.
 /// EventSource on the client will automatically reconnect after receiving.
-fn handle_sse_reload(request: tiny_http::Request, version: &AtomicU64, running: &AtomicBool) {
-    let current = version.load(Ordering::SeqCst);
+///
+/// Root cause of prior instability: SSE timeout (30s) ≈ rebuild time (30-60s).
+/// The version would increment DURING the reconnection window between the old
+/// SSE closing and the new SSE opening — the event was lost. The new SSE saw
+/// the already-incremented version as "current" and waited for the NEXT change.
+///
+/// Fix 1: client sends its last-known version as ?v=N. If the server's version
+/// is already ahead, send reload immediately (catches the missed event).
+/// Fix 2: timeout increased to 300s (5 min) to outlast any rebuild.
+fn handle_sse_reload(
+    request: tiny_http::Request,
+    version: &AtomicU64,
+    running: &AtomicBool,
+    client_version: Option<u64>,
+) {
+    let server_version = version.load(Ordering::SeqCst);
 
-    // Wait up to 30s for a rebuild (poll every 200ms)
+    // If client sent a version and it's behind the server, reload immediately.
+    // This catches the race where the version incremented during reconnection.
+    if let Some(cv) = client_version {
+        if cv < server_version {
+            let body = format!("data: reload\n\n");
+            let response = tiny_http::Response::from_string(body)
+                .with_header(
+                    tiny_http::Header::from_bytes(b"Content-Type", b"text/event-stream").unwrap(),
+                )
+                .with_header(tiny_http::Header::from_bytes(b"Cache-Control", b"no-cache").unwrap())
+                .with_header(tiny_http::Header::from_bytes(b"Connection", b"close").unwrap());
+            let _ = request.respond(response);
+            return;
+        }
+    }
+
+    // Wait up to 300s for a rebuild (poll every 200ms).
+    // 300s is 5× longer than the slowest observed rebuild (~60s).
     let start = Instant::now();
-    while running.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(30) {
-        if version.load(Ordering::SeqCst) != current {
-            // Version changed → send reload event
-            let body = "data: reload\n\n";
+    while running.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(300) {
+        if version.load(Ordering::SeqCst) != server_version {
+            let new_version = version.load(Ordering::SeqCst);
+            let body = format!("data: reload:{}\n\n", new_version);
             let response = tiny_http::Response::from_string(body)
                 .with_header(
                     tiny_http::Header::from_bytes(b"Content-Type", b"text/event-stream").unwrap(),
@@ -120,8 +157,8 @@ fn handle_sse_reload(request: tiny_http::Request, version: &AtomicU64, running: 
         std::thread::sleep(Duration::from_millis(200));
     }
 
-    // Timeout keep-alive — sent as data so client onmessage fires (resets retry counter)
-    let body = "data: ping\n\n";
+    // Timeout keep-alive
+    let body = format!("data: ping:{}\n\n", server_version);
     let response = tiny_http::Response::from_string(body)
         .with_header(tiny_http::Header::from_bytes(b"Content-Type", b"text/event-stream").unwrap())
         .with_header(tiny_http::Header::from_bytes(b"Cache-Control", b"no-cache").unwrap())

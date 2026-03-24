@@ -17,17 +17,25 @@ use std::time::{Duration, SystemTime};
 pub const RELOAD_SCRIPT: &str = r#"<script>
 (function() {
   let retries = 0;
+  let knownVersion = 0;
   function connect() {
-    const es = new EventSource('/__reload');
+    const url = '/__reload' + (knownVersion > 0 ? '?v=' + knownVersion : '');
+    const es = new EventSource(url);
     es.onmessage = function(e) {
-      if (e.data === 'reload') {
+      const d = e.data;
+      if (d.startsWith('reload')) {
+        const parts = d.split(':');
+        if (parts.length > 1) knownVersion = parseInt(parts[1]) || knownVersion;
         window.location.reload();
+      } else if (d.startsWith('ping')) {
+        const parts = d.split(':');
+        if (parts.length > 1) knownVersion = parseInt(parts[1]) || knownVersion;
       }
       retries = 0;
     };
     es.onerror = function() {
       es.close();
-      if (retries < 120) {
+      if (retries < 300) {
         retries++;
         setTimeout(connect, 1000);
       }
