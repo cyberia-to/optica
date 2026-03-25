@@ -69,6 +69,10 @@ fn extract_yaml_frontmatter(content: &str, page_name: &str) -> (PageMeta, String
             }
             props
         }
+        Err(e) => {
+            eprintln!("  Warning: YAML parse error in '{}': {} (frontmatter ignored)", page_name, e);
+            HashMap::new()
+        }
         _ => HashMap::new(),
     };
 
