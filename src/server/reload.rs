@@ -154,12 +154,10 @@ fn watch_and_rebuild_loop(config: &SiteConfig, build_version: &Arc<AtomicU64>) -
     let mut watcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
-                if matches!(
-                    event.kind,
-                    notify::EventKind::Modify(_)
-                        | notify::EventKind::Create(_)
-                        | notify::EventKind::Remove(_)
-                ) {
+                // Accept all event kinds — Create, Modify, Remove, plus Any/Other.
+                // On macOS, FSEvents may emit EventKind::Other with Flag::Rescan
+                // when the kernel drops events; ignoring these loses file creations.
+                if !event.paths.is_empty() {
                     let _ = tx.send(event.paths);
                 }
             }
@@ -801,6 +799,7 @@ fn incremental_rebuild(
 
     // Check for structural change: pages added or removed, or tags changed, or meta/links changed.
     let pages_added_or_removed = content_page_ids != cache.last_content_page_ids;
+    let pages_removed = cache.last_content_page_ids.iter().any(|id| !content_page_ids.contains(id));
     let tags_changed = dirty_ids.iter().any(|dirty_id| {
         all_parsed.iter().find(|p| &p.id == dirty_id).map(|page| {
             let new_tag_hash = hash_str(&page.meta.tags.join(","));
@@ -850,18 +849,34 @@ fn incremental_rebuild(
             cache.backlink_snapshots.remove(page_id);
         }
 
-        // Fix 3: Mark namespace parents dirty on structural changes
-        for ns_key in store.namespace_tree.keys() {
-            // Namespace parent pages need re-rendering (they show child lists)
-            dirty_ids.insert(ns_key.clone());
+        // Fix 3: Mark namespace parents dirty only when their child list changed.
+        // Previously this marked ALL namespace parents dirty on any structural
+        // change, causing 200+ unnecessary re-renders for a single new file.
+        let new_namespace_keys: HashSet<String> = store.namespace_tree.keys().cloned().collect();
+        for ns_key in &new_namespace_keys {
+            if !old_namespace_keys.contains(ns_key) {
+                // New namespace parent — must render
+                dirty_ids.insert(ns_key.clone());
+            } else {
+                // Existing namespace — check if children changed
+                let new_children = store.namespace_tree.get(ns_key);
+                // Children may have been added/removed; mark dirty if set differs
+                // (We only have old keys, not old children — so any namespace whose
+                // key existed before is only dirty if a changed page lives in it.)
+                if changed_page_ids.iter().any(|cid| {
+                    new_children.map(|ch| ch.contains(cid)).unwrap_or(false)
+                }) {
+                    dirty_ids.insert(ns_key.clone());
+                }
+            }
         }
-        // Also mark parents of removed namespaces dirty
+        // Mark parents of removed namespaces dirty
         for old_key in &old_namespace_keys {
-            if !store.namespace_tree.contains_key(old_key) {
+            if !new_namespace_keys.contains(old_key) {
                 dirty_ids.insert(old_key.clone());
             }
         }
-        cache.last_namespace_keys = store.namespace_tree.keys().cloned().collect();
+        cache.last_namespace_keys = new_namespace_keys;
 
         for (page_id, page) in &store.pages {
             if !cache.content_hashes.contains_key(page_id) {
@@ -930,8 +945,21 @@ fn incremental_rebuild(
         crate::output::write_output(&rendered, &store, config, &discovered)?;
         cache.initialized = true;
     } else if structural_change {
-        // Structural change: write all pages + regenerate indexes
-        crate::output::write_incremental(&rendered, &store, config, &discovered)?;
+        if pages_removed {
+            // Pages were removed: full incremental write to clean up stale directories
+            crate::output::write_incremental(&rendered, &store, config, &discovered)?;
+        } else {
+            // Pages added or tags/meta changed (no removals): write dirty + synthetic.
+            // Previously this wrote ALL 12K pages via write_incremental,
+            // which took 30-60s. Now we only write the actually-changed pages.
+            // Include all synthetic/tag pages that render_cached re-rendered.
+            for rp in &rendered {
+                if rp.page_id.starts_with("__") {
+                    dirty_ids.insert(rp.page_id.clone());
+                }
+            }
+            crate::output::write_dirty_pages(&rendered, &dirty_ids, config)?;
+        }
     } else {
         // Content-only change: write just the dirty pages
         crate::output::write_dirty_pages(&rendered, &dirty_ids, config)?;
