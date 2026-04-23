@@ -53,6 +53,11 @@ enum Commands {
         /// Override base URL
         #[arg(long)]
         base_url: Option<String>,
+
+        /// Path to subgraphs TOML. When set, replaces frontmatter-based
+        /// subgraph discovery. Each entry: { name, path, exclude[] }.
+        #[arg(long)]
+        subgraphs: Option<PathBuf>,
     },
 
     /// Build and serve with live reload
@@ -80,6 +85,11 @@ enum Commands {
         /// Include non-public pages
         #[arg(long)]
         drafts: bool,
+
+        /// Path to subgraphs TOML. When set, replaces frontmatter-based
+        /// subgraph discovery. Each entry: { name, path, exclude[] }.
+        #[arg(long)]
+        subgraphs: Option<PathBuf>,
     },
 
     /// Initialize a new publish.toml config
@@ -169,6 +179,7 @@ fn main() -> Result<()> {
             output,
             drafts,
             base_url,
+            subgraphs,
         } => {
             let (_config_path, mut config) = resolve_config(&cli.config, &input);
             if let Some(ref out) = output {
@@ -181,7 +192,7 @@ fn main() -> Result<()> {
                 config.content.public_only = false;
             }
 
-            build_site(&config, cli.quiet)?;
+            build_site(&config, cli.quiet, subgraphs.as_deref())?;
         }
         Commands::Serve {
             input,
@@ -190,6 +201,7 @@ fn main() -> Result<()> {
             no_reload,
             open,
             drafts,
+            subgraphs,
         } => {
             let (_config_path, mut config) = resolve_config(&cli.config, &input);
 
@@ -204,7 +216,7 @@ fn main() -> Result<()> {
                 config.content.public_only = false;
             }
 
-            build_site(&config, cli.quiet)?;
+            build_site(&config, cli.quiet, subgraphs.as_deref())?;
 
             optica::server::serve(&config, &bind, port, !no_reload, open)?;
         }
@@ -267,7 +279,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn build_site(config: &SiteConfig, quiet: bool) -> Result<()> {
+fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path>) -> Result<()> {
     let start = std::time::Instant::now();
 
     if !quiet {
@@ -294,10 +306,18 @@ fn build_site(config: &SiteConfig, quiet: bool) -> Result<()> {
     }
 
     // Step 3: Discover and scan subgraphs
-    let subgraph_decls = optica::scanner::subgraph::discover_subgraphs(
-        &parsed_pages,
-        &config.build.input_dir,
-    );
+    let subgraph_decls = if let Some(path) = subgraphs_override {
+        if !quiet {
+            println!(
+                "  {} Loaded subgraphs from {}",
+                "Config".dimmed(),
+                path.display()
+            );
+        }
+        optica::scanner::subgraph_config::load(path)?
+    } else {
+        optica::scanner::subgraph::discover_subgraphs(&parsed_pages, &config.build.input_dir)
+    };
 
     if !subgraph_decls.is_empty() {
         let subgraph_namespaces: Vec<String> =

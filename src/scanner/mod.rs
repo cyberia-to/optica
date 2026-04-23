@@ -5,6 +5,7 @@
 // ---
 mod classify;
 pub mod subgraph;
+pub mod subgraph_config;
 
 use crate::config::ContentSection;
 use anyhow::Result;
