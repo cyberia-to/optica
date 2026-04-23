@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}404 — {{ site.title }}{% endblock %}
+{% block description %}page not found{% endblock %}
+{% block og_title %}404 — {{ site.title }}{% endblock %}
+{% block twitter_title %}404 — {{ site.title }}{% endblock %}
+
+{% block content %}
+<article class="page page-404">
+    <header class="page-header">
+        <h1>404</h1>
+        <div class="page-meta-row">
+            <span class="reading-time">no such particle in this graph</span>
+        </div>
+    </header>
+    <section>
+        <p>
+            the path you followed has no page. it may have been renamed,
+            moved to a private subgraph, or never existed.
+        </p>
+        <p>
+            <a href="/">return to the graph root</a>
+            · <a href="/graph">open the full graph</a>
+            · <a href="/tags">browse tags</a>
+        </p>
+    </section>
+</article>
+{% endblock %}

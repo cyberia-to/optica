@@ -223,6 +223,16 @@ pub fn render_cached(
         rendered.push(cached.clone());
     }
 
+    // Render 404 page — Netlify and GitHub Pages auto-serve /404.html
+    // for missing paths. Keeping it next to the root so the host finds it
+    // without extra redirect rules.
+    if any_dirty {
+        let not_found_html = render_404(store, config, &env)?;
+        push_synthetic!("__404__", not_found_html, "/404.html");
+    } else if let Some(cached) = cache.get("__404__") {
+        rendered.push(cached.clone());
+    }
+
     // Generate redirect pages for aliases
     for (alias_slug, canonical_id) in &store.alias_map {
         // Don't generate redirect if alias slug matches an existing page or reserved slug
@@ -733,5 +743,26 @@ fn render_files_page(
     };
 
     let tmpl = env.get_template("files.html")?;
+    Ok(tmpl.render(&ctx)?)
+}
+
+fn render_404(
+    store: &PageStore,
+    config: &SiteConfig,
+    env: &minijinja::Environment,
+) -> Result<String> {
+    let ctx = minijinja::context! {
+        site => config.site,
+        style => config.style,
+        nav_menu => context::resolve_nav_menu(config, store),
+        search => config.search,
+        analytics => config.analytics,
+        graph => config.graph,
+        favicon => config.site.favicon,
+        description => "page not found",
+        canonical_url => format!("{}/404.html", config.site.base_url),
+    };
+
+    let tmpl = env.get_template("404.html")?;
     Ok(tmpl.render(&ctx)?)
 }
