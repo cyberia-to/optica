@@ -9,7 +9,7 @@ use crate::render::RenderedPage;
 use anyhow::Result;
 use colored::Colorize;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, SystemTime};
@@ -75,6 +75,9 @@ struct BuildCache {
     subgraph_repo_paths: Vec<PathBuf>,
     /// Cached graph store — reused when no structural change (avoids expensive PageRank/gravity)
     cached_store: Option<crate::graph::PageStore>,
+    /// Names of subgraphs declared private in the optional --subgraphs TOML.
+    /// Applied to every store after build_graph so visibility survives reload.
+    private_subgraph_names: HashSet<String>,
 }
 
 impl BuildCache {
@@ -94,6 +97,7 @@ impl BuildCache {
             subgraph_pages: Vec::new(),
             subgraph_repo_paths: Vec::new(),
             cached_store: None,
+            private_subgraph_names: HashSet::new(),
         }
     }
 }
@@ -137,15 +141,23 @@ fn hash_links(page: &ParsedPage) -> u64 {
 
 /// Start a background thread that watches for file changes and rebuilds.
 /// Increments `build_version` after each successful rebuild so SSE clients know to reload.
-pub fn start_watch_rebuild(config: SiteConfig, build_version: Arc<AtomicU64>) {
+pub fn start_watch_rebuild(
+    config: SiteConfig,
+    build_version: Arc<AtomicU64>,
+    subgraphs_path: Option<PathBuf>,
+) {
     std::thread::spawn(move || {
-        if let Err(e) = watch_and_rebuild_loop(&config, &build_version) {
+        if let Err(e) = watch_and_rebuild_loop(&config, &build_version, subgraphs_path.as_deref()) {
             eprintln!("  {} File watcher error: {}", "Error".red(), e);
         }
     });
 }
 
-fn watch_and_rebuild_loop(config: &SiteConfig, build_version: &Arc<AtomicU64>) -> Result<()> {
+fn watch_and_rebuild_loop(
+    config: &SiteConfig,
+    build_version: &Arc<AtomicU64>,
+    subgraphs_path: Option<&Path>,
+) -> Result<()> {
     use notify::Watcher;
 
     // Channel now carries file paths so we know what changed
@@ -200,6 +212,10 @@ fn watch_and_rebuild_loop(config: &SiteConfig, build_version: &Arc<AtomicU64>) -
     }
 
     let mut cache = BuildCache::new();
+    if let Some(path) = subgraphs_path {
+        cache.private_subgraph_names =
+            crate::scanner::subgraph_config::load_private_names(path);
+    }
 
     // Warm up: pre-populate subgraph cache so first incremental rebuild is fast.
     // Without this, the first file change triggers a full re-render of all 12K pages.
@@ -296,7 +312,8 @@ fn watch_and_rebuild_loop(config: &SiteConfig, build_version: &Arc<AtomicU64>) -
                 cache.link_hashes.insert(page.id.clone(), hash_links(page));
             }
             // Build graph to get full store (with stubs, links, PageRank, etc.)
-            let store = crate::graph::build_graph(warmup_pages)?;
+            let mut store = crate::graph::build_graph(warmup_pages)?;
+            store.subgraph_private = cache.private_subgraph_names.clone();
             // Snapshot backlinks
             for (page_id, backlinks) in &store.backlinks {
                 let mut sorted = backlinks.clone();
@@ -823,7 +840,8 @@ fn incremental_rebuild(
     // Full graph build (PageRank, gravity, etc.) is expensive — only do it for structural changes.
     if structural_change || cache.cached_store.is_none() {
         let old_namespace_keys = cache.last_namespace_keys.clone();
-        let store = crate::graph::build_graph(all_parsed)?;
+        let mut store = crate::graph::build_graph(all_parsed)?;
+        store.subgraph_private = cache.private_subgraph_names.clone();
         cache.last_content_page_ids = content_page_ids.clone();
 
         // Fix 4: Compare backlink snapshots — mark pages with changed backlinks dirty

@@ -19,6 +19,7 @@ pub fn serve(
     port: u16,
     live_reload: bool,
     open_browser: bool,
+    subgraphs: Option<&Path>,
 ) -> Result<()> {
     let output_dir = config.build.output_dir.clone();
     let addr = format!("{}:{}", bind, port);
@@ -50,7 +51,11 @@ pub fn serve(
 
     // Start file watcher + rebuild thread
     if live_reload {
-        reload::start_watch_rebuild(config.clone(), build_version.clone());
+        reload::start_watch_rebuild(
+            config.clone(),
+            build_version.clone(),
+            subgraphs.map(|p| p.to_path_buf()),
+        );
     }
 
     println!("  Press Ctrl+C to stop\n");

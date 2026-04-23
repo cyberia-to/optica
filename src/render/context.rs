@@ -470,7 +470,12 @@ pub fn build_page_context(
             kind => format!("{:?}", page.kind),
             toc => toc_html,
             focus => store.focus.get(&page.id).copied().unwrap_or(0.0),
-            is_public => page.meta.public.unwrap_or(config.content.default_public),
+            is_private => {
+                let sg_private = page.subgraph.as_ref()
+                    .map(|s| store.subgraph_private.contains(s))
+                    .unwrap_or(false);
+                sg_private || page.meta.public == Some(false)
+            },
         },
         backlinks => backlink_data,
         dimensional_peers => dimensional_peers,

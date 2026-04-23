@@ -802,12 +802,8 @@ hr {
     letter-spacing: 0.03em;
 }
 
-.page-visibility.is-public {
-    color: var(--color-primary);
-}
-
 .page-visibility.is-private {
-    color: #d08770;
+    color: #e06c75;
 }
 
 .page-date {

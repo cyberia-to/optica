@@ -17,6 +17,7 @@ pub struct SubgraphDecl {
     pub repo_path: PathBuf,
     pub exclude_patterns: Vec<String>,
     pub declaring_page_id: PageId,
+    pub is_private: bool,
 }
 
 /// Default exclude patterns applied to all subgraphs.
@@ -97,6 +98,7 @@ pub fn discover_subgraphs(pages: &[ParsedPage], input_dir: &Path) -> Vec<Subgrap
             repo_path,
             exclude_patterns,
             declaring_page_id: page.id.clone(),
+            is_private: false,
         });
     }
 

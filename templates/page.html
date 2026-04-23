@@ -45,9 +45,9 @@ content %}
         </div>
         {% endif %}
         <div class="page-meta-row">
-            <span class="page-visibility {% if page.is_public %}is-public{% else %}is-private{% endif %}"
-                >{% if page.is_public %}public{% else %}private{% endif %}</span
-            >
+            {% if page.is_private %}<span class="page-visibility is-private"
+                >private</span
+            >{% endif %}
             {% if page.focus and page.focus > 0 %}<span class="page-focus"
                 >π {{ (page.focus * 100) | round(2) }}%</span
             >{% endif %}

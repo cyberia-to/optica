@@ -218,7 +218,7 @@ fn main() -> Result<()> {
 
             build_site(&config, cli.quiet, subgraphs.as_deref())?;
 
-            optica::server::serve(&config, &bind, port, !no_reload, open)?;
+            optica::server::serve(&config, &bind, port, !no_reload, open, subgraphs.as_deref())?;
         }
         Commands::Init { path } => {
             std::fs::create_dir_all(&path)?;
@@ -470,7 +470,12 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
     }
 
     // Step 4: Build graph
-    let page_store = optica::graph::build_graph(parsed_pages)?;
+    let mut page_store = optica::graph::build_graph(parsed_pages)?;
+    for decl in &subgraph_decls {
+        if decl.is_private {
+            page_store.subgraph_private.insert(decl.name.clone());
+        }
+    }
     if !quiet {
         let total_links: usize = page_store.forward_links.values().map(|v| v.len()).sum();
         let public_count = page_store.public_pages(&config.content).len();
@@ -660,7 +665,12 @@ fn check_site(config: &SiteConfig) -> Result<()> {
         }
     }
 
-    let page_store = optica::graph::build_graph(parsed_pages)?;
+    let mut page_store = optica::graph::build_graph(parsed_pages)?;
+    for decl in &subgraph_decls {
+        if decl.is_private {
+            page_store.subgraph_private.insert(decl.name.clone());
+        }
+    }
 
     let public_count = page_store.public_pages(&config.content).len();
     let total_count = page_store.pages.len();
