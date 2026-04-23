@@ -66,6 +66,10 @@ enum Commands {
         #[arg(default_value = ".")]
         input: PathBuf,
 
+        /// Output directory
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
         /// Server port (overrides base_url port from config)
         #[arg(short, long)]
         port: Option<u16>,
@@ -196,6 +200,7 @@ fn main() -> Result<()> {
         }
         Commands::Serve {
             input,
+            output,
             port,
             bind,
             no_reload,
@@ -204,6 +209,10 @@ fn main() -> Result<()> {
             subgraphs,
         } => {
             let (_config_path, mut config) = resolve_config(&cli.config, &input);
+
+            if let Some(ref out) = output {
+                config.build.output_dir = out.clone();
+            }
 
             // Resolve port: CLI flag > config base_url > default 8080
             let port = port
