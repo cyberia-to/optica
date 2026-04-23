@@ -21,7 +21,7 @@ pub struct SubgraphDecl {
 }
 
 /// Default exclude patterns applied to all subgraphs.
-const DEFAULT_EXCLUDES: &[&str] = &[
+pub const DEFAULT_EXCLUDES: &[&str] = &[
     ".git/**",
     "target/**",
     "**/target/**",
@@ -29,10 +29,29 @@ const DEFAULT_EXCLUDES: &[&str] = &[
     "**/node_modules/**",
     "build/**",
     "**/build/**",
+    "dist/**",
+    "**/dist/**",
+    ".next/**",
+    "**/.next/**",
+    "out/**",
+    "**/out/**",
     ".claude/**",
     "**/.DS_Store",
     "Cargo.lock",
     "**/Cargo.lock",
+    // Web build output. Optica generates its own index.html for every page,
+    // so subgraphs containing static-site output conflict with rendering.
+    // Knowledge graphs use markdown; HTML in a subgraph is almost always
+    // a compiled artifact, not authored content.
+    "**/index.html",
+    "**/index.htm",
+    // Built JS bundles.
+    "**/*.min.js",
+    "**/*.min.css",
+    // Lock files for JS toolchains.
+    "**/package-lock.json",
+    "**/pnpm-lock.yaml",
+    "**/yarn.lock",
 ];
 
 /// Discover subgraph declarations from parsed root graph pages.

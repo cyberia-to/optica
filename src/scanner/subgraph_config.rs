@@ -13,7 +13,7 @@
 //! orgs, GitHub, cloning, or frontmatter-based discovery.
 
 use crate::parser::PageId;
-use crate::scanner::subgraph::SubgraphDecl;
+use crate::scanner::subgraph::{SubgraphDecl, DEFAULT_EXCLUDES};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -34,20 +34,6 @@ pub struct SubgraphEntry {
     #[serde(default)]
     pub visibility: Option<String>,
 }
-
-const DEFAULT_EXCLUDES: &[&str] = &[
-    ".git/**",
-    "target/**",
-    "**/target/**",
-    "node_modules/**",
-    "**/node_modules/**",
-    "build/**",
-    "**/build/**",
-    ".claude/**",
-    "**/.DS_Store",
-    "Cargo.lock",
-    "**/Cargo.lock",
-];
 
 pub fn load(config_path: &Path) -> Result<Vec<SubgraphDecl>> {
     let raw = std::fs::read_to_string(config_path)
