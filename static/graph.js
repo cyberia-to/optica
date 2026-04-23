@@ -581,13 +581,14 @@
 
   const pageId = container.dataset.pageId;
   const depth = parseInt(container.dataset.depth) || 2;
+  const maxNodes = parseInt(container.dataset.maxNodes) || 30;
   if (!pageId) return;
 
   function loadAndRender() {
     fetch('/graph-data.json')
       .then(r => r.json())
       .then(fullGraph => {
-        const data = extractNeighborhood(fullGraph, pageId, depth);
+        const data = extractNeighborhood(fullGraph, pageId, depth, maxNodes);
         if (data.nodes.length > 1) {
           renderMinimap(data);
         } else {
@@ -597,7 +598,7 @@
       .catch(() => {});
   }
 
-  function extractNeighborhood(graph, centerId, maxDepth) {
+  function extractNeighborhood(graph, centerId, maxDepth, maxNodes) {
     const adj = {};
     const nodeMap = {};
     graph.nodes.forEach(n => { nodeMap[n.id] = n; adj[n.id] = []; });
@@ -608,14 +609,14 @@
       if (adj[t]) adj[t].push(s);
     });
 
-    const visited = new Set([centerId]);
+    const hop = { [centerId]: 0 };
     let frontier = [centerId];
     for (let d = 0; d < maxDepth; d++) {
       const next = [];
       for (const nid of frontier) {
         for (const neighbor of (adj[nid] || [])) {
-          if (!visited.has(neighbor)) {
-            visited.add(neighbor);
+          if (!(neighbor in hop)) {
+            hop[neighbor] = d + 1;
             next.push(neighbor);
           }
         }
@@ -623,14 +624,26 @@
       frontier = next;
     }
 
-    const nodes = Array.from(visited).filter(id => nodeMap[id]).map(id => ({
+    const score = id => {
+      const n = nodeMap[id] || {};
+      const focus = typeof n.focus === 'number' ? n.focus : 0;
+      const rank = typeof n.pageRank === 'number' ? n.pageRank : 0;
+      return (focus + rank) / (1 + (hop[id] || 0));
+    };
+
+    const ranked = Object.keys(hop)
+      .filter(id => nodeMap[id] && id !== centerId)
+      .sort((a, b) => score(b) - score(a))
+      .slice(0, Math.max(0, maxNodes - 1));
+    const keep = new Set([centerId, ...ranked]);
+
+    const nodes = Array.from(keep).map(id => ({
       id, title: nodeMap[id].title, url: nodeMap[id].url, current: id === centerId
     }));
-    const nodeSet = new Set(visited);
     const edges = graph.edges.filter(e => {
       const s = typeof e.source === 'object' ? e.source.id : e.source;
       const t = typeof e.target === 'object' ? e.target.id : e.target;
-      return nodeSet.has(s) && nodeSet.has(t);
+      return keep.has(s) && keep.has(t);
     }).map(e => ({
       source: typeof e.source === 'object' ? e.source.id : e.source,
       target: typeof e.target === 'object' ? e.target.id : e.target

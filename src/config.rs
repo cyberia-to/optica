@@ -214,6 +214,7 @@ pub struct GraphSection {
     pub enabled: bool,
     pub show_minimap: bool,
     pub minimap_depth: usize,
+    pub minimap_max_nodes: usize,
 }
 
 impl Default for GraphSection {
@@ -222,6 +223,7 @@ impl Default for GraphSection {
             enabled: true,
             show_minimap: true,
             minimap_depth: 2,
+            minimap_max_nodes: 30,
         }
     }
 }

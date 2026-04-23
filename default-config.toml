@@ -58,6 +58,7 @@ engine = "json"
 enabled = true
 show_minimap = true
 minimap_depth = 2
+minimap_max_nodes = 30
 
 [style]
 primary_color = "#2d6a4f"
