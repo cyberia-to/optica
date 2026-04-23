@@ -779,12 +779,35 @@ hr {
     background: rgba(136, 192, 208, 0.08);
 }
 
-.page-focus {
+.page-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
     font-size: 0.8rem;
     font-family: var(--font-mono);
+    opacity: 0.7;
+}
+
+.page-focus {
     color: var(--color-primary);
-    opacity: 0.6;
-    margin-top: 0.3rem;
+}
+
+.page-visibility {
+    padding: 0.05rem 0.45rem;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    text-transform: lowercase;
+    letter-spacing: 0.03em;
+}
+
+.page-visibility.is-public {
+    color: var(--color-primary);
+}
+
+.page-visibility.is-private {
+    color: #d08770;
 }
 
 .page-date {
@@ -810,14 +833,6 @@ hr {
 
 .page-content {
     margin-bottom: 2rem;
-}
-
-.page-footer {
-    margin-top: 2rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--color-border);
-    font-size: 0.8rem;
-    opacity: 0.5;
 }
 
 .namespace-children {

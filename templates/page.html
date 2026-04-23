@@ -43,13 +43,21 @@ content %}
             >
             {% endif %}
         </div>
-        {% endif %} {% if page.focus and page.focus > 0 %}
-        <div class="page-focus">π {{ (page.focus * 100) | round(2) }}%</div>
-        {% endif %} {% if page.date %}
-        <time class="page-date" datetime="{{ page.date }}"
-            >{{ page.date }}</time
-        >
         {% endif %}
+        <div class="page-meta-row">
+            <span class="page-visibility {% if page.is_public %}is-public{% else %}is-private{% endif %}"
+                >{% if page.is_public %}public{% else %}private{% endif %}</span
+            >
+            {% if page.focus and page.focus > 0 %}<span class="page-focus"
+                >π {{ (page.focus * 100) | round(2) }}%</span
+            >{% endif %}
+            <span class="reading-time"
+                >{{ page.word_count }} words · {{ page.reading_time_minutes }} min</span
+            >
+            {% if page.date %}<time class="page-date" datetime="{{ page.date }}"
+                >{{ page.date }}</time
+            >{% endif %}
+        </div>
     </header>
 
     {% if page.toc %} {{ page.toc|safe }} {% endif %}
@@ -101,11 +109,5 @@ content %}
     <script src="/static/graph.js"></script>
     {% endif %}
 
-    <footer class="page-footer">
-        <span class="reading-time"
-            >{{ page.word_count }} words · {{
-            page.reading_time_minutes }} min read</span
-        >
-    </footer>
 </article>
 {% endblock %}
