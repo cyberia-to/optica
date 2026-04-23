@@ -52,6 +52,28 @@ pub const DEFAULT_EXCLUDES: &[&str] = &[
     "**/package-lock.json",
     "**/pnpm-lock.yaml",
     "**/yarn.lock",
+    // Vendored dependencies. Not authored content; each file would render
+    // to a full HTML page and balloon output size by an order of magnitude.
+    "vendor/**",
+    "**/vendor/**",
+    // Python runtime caches and envs.
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/*.pyo",
+    "**/.venv/**",
+    "**/venv/**",
+    // Compiled binaries and object files.
+    "**/*.wasm",
+    "**/*.so",
+    "**/*.dylib",
+    "**/*.a",
+    "**/*.rlib",
+    "**/*.o",
+    "**/*.exe",
+    "**/*.dll",
+    // Coverage and benchmark output.
+    "**/coverage/**",
+    "**/.nyc_output/**",
 ];
 
 /// Discover subgraph declarations from parsed root graph pages.
