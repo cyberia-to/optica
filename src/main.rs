@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 use optica::config::SiteConfig;
 use optica::graph::PageStore;
+use optica::parser::ParsedPage;
+use std::collections::HashMap;
 
 #[derive(Parser)]
 #[command(name = "cyber-publish")]
@@ -58,6 +60,15 @@ enum Commands {
         /// subgraph discovery. Each entry: { name, path, exclude[] }.
         #[arg(long)]
         subgraphs: Option<PathBuf>,
+
+        /// Path to JSON mapping filename → IPFS CID. When set, rewrites
+        /// `../media/<name>` references in markdown to gateway IPFS URLs.
+        #[arg(long)]
+        ipfs_map: Option<PathBuf>,
+
+        /// IPFS gateway base URL used with --ipfs-map.
+        #[arg(long, default_value = "https://gateway.pinata.cloud")]
+        ipfs_gateway: String,
     },
 
     /// Build and serve with live reload
@@ -94,6 +105,15 @@ enum Commands {
         /// subgraph discovery. Each entry: { name, path, exclude[] }.
         #[arg(long)]
         subgraphs: Option<PathBuf>,
+
+        /// Path to JSON mapping filename → IPFS CID. When set, rewrites
+        /// `../media/<name>` references in markdown to gateway IPFS URLs.
+        #[arg(long)]
+        ipfs_map: Option<PathBuf>,
+
+        /// IPFS gateway base URL used with --ipfs-map.
+        #[arg(long, default_value = "https://gateway.pinata.cloud")]
+        ipfs_gateway: String,
     },
 
     /// Initialize a new publish.toml config
@@ -184,6 +204,8 @@ fn main() -> Result<()> {
             drafts,
             base_url,
             subgraphs,
+            ipfs_map,
+            ipfs_gateway,
         } => {
             let (_config_path, mut config) = resolve_config(&cli.config, &input);
             if let Some(ref out) = output {
@@ -195,6 +217,8 @@ fn main() -> Result<()> {
             if drafts {
                 config.content.public_only = false;
             }
+            config.media.ipfs_map = ipfs_map;
+            config.media.ipfs_gateway = ipfs_gateway;
 
             build_site(&config, cli.quiet, subgraphs.as_deref())?;
         }
@@ -207,6 +231,8 @@ fn main() -> Result<()> {
             open,
             drafts,
             subgraphs,
+            ipfs_map,
+            ipfs_gateway,
         } => {
             let (_config_path, mut config) = resolve_config(&cli.config, &input);
 
@@ -224,6 +250,8 @@ fn main() -> Result<()> {
             if drafts {
                 config.content.public_only = false;
             }
+            config.media.ipfs_map = ipfs_map;
+            config.media.ipfs_gateway = ipfs_gateway;
 
             build_site(&config, cli.quiet, subgraphs.as_deref())?;
 
@@ -478,6 +506,22 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
         }
     }
 
+    // Rewrite `../media/<name>` references to gateway IPFS URLs using the
+    // cache map, if provided. Keeps markdown source portable while letting
+    // every build target (CI, local dev) resolve identically.
+    if let Some(ref map_path) = config.media.ipfs_map {
+        let count = apply_ipfs_rewrites(&mut parsed_pages, map_path, &config.media.ipfs_gateway)?;
+        if !quiet {
+            println!(
+                "  {} Rewrote {} media ref{} via {}",
+                "IPFS".dimmed(),
+                count,
+                if count == 1 { "" } else { "s" },
+                map_path.display()
+            );
+        }
+    }
+
     // Step 4: Build graph
     let mut page_store = optica::graph::build_graph(parsed_pages)?;
     for decl in &subgraph_decls {
@@ -532,6 +576,42 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
     }
 
     Ok(())
+}
+
+/// Rewrite relative `../media/<filename>` references in every page's
+/// content_md to `<gateway>/ipfs/<cid>` using the filename→CID map.
+/// Unknown filenames are left untouched.
+fn apply_ipfs_rewrites(
+    pages: &mut [ParsedPage],
+    map_path: &Path,
+    gateway: &str,
+) -> Result<usize> {
+    let raw = std::fs::read_to_string(map_path)
+        .map_err(|e| anyhow::anyhow!("reading ipfs map {}: {}", map_path.display(), e))?;
+    let map: HashMap<String, String> = serde_json::from_str(&raw)
+        .map_err(|e| anyhow::anyhow!("parsing ipfs map {}: {}", map_path.display(), e))?;
+    let gateway = gateway.trim_end_matches('/');
+    // Match `../media/<filename>` where filename is any non-space, non-close
+    // chars — the same scope the previous shell step covered.
+    let re = regex::Regex::new(r#"\.\./media/([^\s\)"'\]<>]+)"#).unwrap();
+    let mut rewrites = 0usize;
+    for page in pages.iter_mut() {
+        let rewritten = re
+            .replace_all(&page.content_md, |caps: &regex::Captures| {
+                match map.get(&caps[1]) {
+                    Some(cid) => {
+                        rewrites += 1;
+                        format!("{}/ipfs/{}", gateway, cid)
+                    }
+                    None => caps[0].to_string(),
+                }
+            })
+            .to_string();
+        if rewritten != page.content_md {
+            page.content_md = rewritten;
+        }
+    }
+    Ok(rewrites)
 }
 
 /// Copy media/binary files from a subgraph repo to output/media/{subgraph}/.

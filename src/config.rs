@@ -20,6 +20,25 @@ pub struct SiteConfig {
     pub analytics: AnalyticsSection,
     pub graph: GraphSection,
     pub style: StyleSection,
+    pub media: MediaSection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MediaSection {
+    /// JSON file mapping filename → IPFS CID.
+    pub ipfs_map: Option<PathBuf>,
+    /// Gateway prefix used to assemble `<gateway>/ipfs/<cid>` URLs.
+    pub ipfs_gateway: String,
+}
+
+impl Default for MediaSection {
+    fn default() -> Self {
+        Self {
+            ipfs_map: None,
+            ipfs_gateway: "https://gateway.pinata.cloud".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
