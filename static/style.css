@@ -67,24 +67,12 @@
    PAGE TRANSITIONS
    ============================================================ */
 
-/* Native cross-document View Transitions (Chrome 126+, Safari 18+).
-   Strategy: isolate only .main-content as the animated region. Everything
-   else (header, sidebar) stays in root and, since those regions render
-   identically across pages, no visible motion occurs there. */
-@view-transition {
-    navigation: auto;
-}
-
-/* One crossfade for the entire page. plus-lighter keeps the summed
-   opacity of old+new at 1 throughout, so no midpoint gap. Regions that
-   look identical on both pages (sidebar, header) render as themselves
-   with zero visible motion — only the bits that actually change animate. */
-::view-transition-old(root),
-::view-transition-new(root) {
-    animation-duration: 220ms;
-    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-    mix-blend-mode: plus-lighter;
-}
+/* Cross-document View Transitions were tried and reverted: the
+   @view-transition { navigation: auto } path in current Chromium/Safari
+   intermittently drops clicks that land during an in-progress transition
+   — reproducible as a ~10% drop on back-to-back navigations. The
+   smoothness isn't worth the cost of users having to click twice. Keep
+   the hover-prefetch as the perceived-snappiness primitive instead. */
 
 /* Keep scrollbar width stable so sidebar/header don't shift when page
    content is shorter or longer than the viewport. This is the most common
@@ -668,11 +656,62 @@ hr {
     margin-bottom: 2rem;
 }
 
+/* Title bar: sticks below the site header so the reader never loses
+   the page they're on. Site header (z:30) would otherwise cover it.
+   --site-header-h is set from JS on load and resize. Metadata below
+   scrolls away with body. */
+.page-title-bar {
+    position: sticky;
+    top: var(--site-header-h, 3rem);
+    z-index: 20;
+    background: var(--color-bg);
+    padding: 0.75rem 0 0.4rem;
+    margin: -0.75rem 0 0.5rem;
+}
+
 .page-header h1 {
-    margin-bottom: 0.5rem;
+    margin: 0;
     display: flex;
     align-items: center;
     gap: 0.4rem;
+}
+
+/* Tab bar: lives after main content in normal flow. When the reader
+   scrolls past it, it pins directly under site-header + title-bar
+   and stays there while the four sections scroll under it. The
+   stacked `top` offset is driven by --sticky-h, set from JS. */
+.page-tabs {
+    position: sticky;
+    top: var(--sticky-h, 6rem);
+    z-index: 19;
+    background: var(--color-bg);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    margin: 2.5rem 0 0;
+    padding: 0.5rem 0;
+    font-size: 0.9rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.page-tab {
+    padding: 0.4rem 0;
+    margin-bottom: -1px;
+    color: var(--color-text);
+    opacity: 0.5;
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.page-tab:hover {
+    opacity: 0.9;
+}
+
+.page-tab.is-active {
+    opacity: 1;
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
 }
 
 /* Icon + page name on one line */
@@ -802,62 +841,85 @@ hr {
     margin-bottom: 2rem;
 }
 
-.namespace-children {
-    margin-top: 2rem;
-    padding: 1rem;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-}
-
-.namespace-children h2 {
-    font-size: 1.1rem;
-    margin-top: 0;
-}
-
 /* ============================================================
-   DIMENSIONAL PEERS
+   POST-CONTENT SECTIONS
+   Dimensions / Children / Linked References / Local Graph share one
+   visual grammar: dimmed uppercase label, flat list underneath, no
+   boxes. Each section distinguishes itself by content, not chrome.
    ============================================================ */
 
-.dimensional-peers {
-    margin-top: 2rem;
+.dimensional-peers,
+.namespace-children,
+.backlinks,
+.page-minimap {
+    margin-top: 2.5rem;
+    padding: 0;
+    background: transparent;
+    border: none;
+    /* Anchor-jumps and smooth-scroll account for the sticky stack
+       (site-header + title-bar + tabs-bar). JS sets --sticky-h-full. */
+    scroll-margin-top: calc(var(--sticky-h-full, 8rem) + 1rem);
 }
 
-.dimensional-peers h2 {
+.dimensional-peers > h2,
+.namespace-children > h2,
+.backlinks > h2,
+.page-minimap > h2 {
+    font-size: 1.35rem;
+    font-weight: 700;
+    text-transform: none;
+    letter-spacing: 0;
+    opacity: 1;
+    margin: 0 0 1rem 0;
+}
+
+.namespace-children ul,
+.backlinks-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.namespace-children li,
+.backlinks-list li {
+    padding: 0.25rem 0;
     font-size: 0.9rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    opacity: 0.5;
-    margin-top: 0;
-    margin-bottom: 0.75rem;
 }
 
+.backlink-title {
+    font-size: 0.9rem;
+}
+
+/* Dimensions uses <details> so content is collapsible, but the summary
+   row should look identical to a backlink list item — no box, no bg. */
 .dimension {
-    margin-bottom: 0.5rem;
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    overflow: hidden;
+    border: none;
+    border-radius: 0;
+    margin: 0;
 }
 
 .dimension-path {
     display: block;
-    padding: 0.5rem 1rem;
-    background: var(--color-surface);
+    padding: 0.25rem 0;
+    background: transparent;
     cursor: pointer;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
 }
 
 .dimension-path:hover {
-    background: var(--color-border);
+    background: transparent;
+    opacity: 0.85;
 }
 
 .dimension-path a {
-    opacity: 0.7;
+    opacity: 0.8;
 }
 
 .dimension-content {
-    padding: 0.5rem 1rem 1rem;
-    border-top: 1px solid var(--color-border);
+    padding: 0.5rem 0 0.5rem 1rem;
+    margin: 0.25rem 0 0.5rem 0.25rem;
+    border-top: none;
+    border-left: 2px solid var(--color-border);
     font-size: 0.9rem;
     opacity: 0.85;
 }
@@ -867,38 +929,6 @@ hr {
 .dimension-content h3 {
     font-size: 1rem;
     margin-top: 1rem;
-}
-
-/* ============================================================
-   BACKLINKS
-   ============================================================ */
-
-.backlinks {
-    margin-top: 3rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid var(--color-border);
-}
-
-.backlinks h2 {
-    font-size: 0.9rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    opacity: 0.5;
-    margin-top: 0;
-    margin-bottom: 0.75rem;
-}
-
-.backlinks-list {
-    list-style: none;
-    padding: 0;
-}
-
-.backlinks-list li {
-    padding: 0.3rem 0;
-}
-
-.backlink-title {
-    font-size: 0.9rem;
 }
 
 /* ============================================================
@@ -1738,14 +1768,3 @@ body:has(.fullscreen-viz) .main-content {
     opacity: 0.4;
 }
 
-/* ============================================================
-   MINIMAP
-   ============================================================ */
-
-.page-minimap h3 {
-    font-size: 0.85rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    opacity: 0.5;
-    margin-bottom: 0.5rem;
-}

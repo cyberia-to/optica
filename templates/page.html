@@ -6,7 +6,11 @@ og_type %}article{% endblock %} {% block twitter_title %}{{
 page.title }} — {{ site.title }}{% endblock %} {% block
 content %}
 <article class="page">
-    <header class="page-header">
+    {% set has_folder = page.children %}
+    {% set has_synonyms = dimensional_peers %}
+    {% set has_neighbours = graph.show_minimap %}
+    {% set has_mentions = backlinks %}
+    <div class="page-title-bar">
         <h1>
             {% if page.icon %}<span class="page-icon"
                 >{{ page.icon }}</span
@@ -18,6 +22,8 @@ content %}
             ><span class="ns-sep">/</span>{% endfor %}{%
             endif %}{{ page.display_name }}
         </h1>
+    </div>
+    <header class="page-header">
         {% if page.aliases %}
         <div class="page-aliases">
             {% for alias in page.aliases %}<span
@@ -66,9 +72,33 @@ content %}
         {{ page.html_content|safe }}
     </div>
 
+    {% if has_folder or has_synonyms or has_neighbours or has_mentions %}
+    <nav class="page-tabs" aria-label="Page sections">
+        {% if has_folder %}<a class="page-tab" data-target="folder" href="#folder">Folder</a>{% endif %}
+        {% if has_synonyms %}<a class="page-tab" data-target="synonyms" href="#synonyms">Synonyms</a>{% endif %}
+        {% if has_neighbours %}<a class="page-tab" data-target="neighbours" href="#neighbours">Neighbours</a>{% endif %}
+        {% if has_mentions %}<a class="page-tab" data-target="mentions" href="#mentions">Mentions</a>{% endif %}
+    </nav>
+    {% endif %}
+
+    {% if page.children %}
+    <section id="folder" class="namespace-children">
+        <h2>Folder</h2>
+        <ul>
+            {% for child in page.children %}
+            <li>
+                <a href="{{ child.url }}"
+                    >{{ child.title }}</a
+                >
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
+
     {% if dimensional_peers %}
-    <section class="dimensional-peers">
-        <h2>Dimensions</h2>
+    <section id="synonyms" class="dimensional-peers">
+        <h2>Synonyms</h2>
         {% for peer in dimensional_peers %}
         <details class="dimension">
             <summary class="dimension-path">
@@ -82,23 +112,9 @@ content %}
     </section>
     {% endif %}
 
-    {% if page.children %}
-    <section class="namespace-children">
-        <h2>Pages in this namespace</h2>
-        <ul>
-            {% for child in page.children %}
-            <li>
-                <a href="{{ child.url }}"
-                    >{{ child.title }}</a
-                >
-            </li>
-            {% endfor %}
-        </ul>
-    </section>
-    {% endif %} {% include "partials/backlinks.html" %} {%
-    if graph.show_minimap %}
-    <section class="page-minimap">
-        <h3>Local Graph</h3>
+    {% if graph.show_minimap %}
+    <section id="neighbours" class="page-minimap">
+        <h2>Neighbours</h2>
         <div
             id="minimap-container"
             data-page-id="{{ page.id }}"
@@ -109,5 +125,58 @@ content %}
     <script src="/static/graph.js"></script>
     {% endif %}
 
+    {% include "partials/backlinks.html" %}
+
+    <script>
+        (function () {
+            var tabs = Array.prototype.slice.call(document.querySelectorAll('.page-tab'));
+            var siteHeader = document.querySelector('.site-header');
+            var titleBar = document.querySelector('.page-title-bar');
+            var tabsBar = document.querySelector('.page-tabs');
+            function siteHeaderHeight() { return siteHeader ? siteHeader.offsetHeight : 0; }
+            function titleBarHeight() { return titleBar ? titleBar.offsetHeight : 0; }
+            function tabsBarHeight() { return tabsBar ? tabsBar.offsetHeight : 0; }
+            function syncOffsets() {
+                var sh = siteHeaderHeight();
+                var th = titleBarHeight();
+                var bh = tabsBarHeight();
+                document.documentElement.style.setProperty('--site-header-h', sh + 'px');
+                document.documentElement.style.setProperty('--title-bar-h', th + 'px');
+                document.documentElement.style.setProperty('--sticky-h', (sh + th) + 'px');
+                document.documentElement.style.setProperty('--sticky-h-full', (sh + th + bh) + 'px');
+            }
+            syncOffsets();
+            window.addEventListener('resize', syncOffsets, { passive: true });
+            if (!tabs.length) return;
+            var sections = tabs
+                .map(function (t) { return document.getElementById(t.dataset.target); })
+                .filter(Boolean);
+            if (!sections.length) return;
+            tabs.forEach(function (t) {
+                t.addEventListener('click', function (e) {
+                    var el = document.getElementById(t.dataset.target);
+                    if (!el) return;
+                    e.preventDefault();
+                    var offset = siteHeaderHeight() + titleBarHeight() + tabsBarHeight() + 12;
+                    var top = el.getBoundingClientRect().top + window.scrollY - offset;
+                    window.scrollTo({ top: top, behavior: 'smooth' });
+                    history.replaceState(null, '', '#' + t.dataset.target);
+                });
+            });
+            function update() {
+                var threshold = siteHeaderHeight() + titleBarHeight() + tabsBarHeight() + 24;
+                var active = -1;
+                sections.forEach(function (s, i) {
+                    if (s.getBoundingClientRect().top - threshold <= 0) active = i;
+                });
+                tabs.forEach(function (t, i) {
+                    t.classList.toggle('is-active', i === active);
+                });
+            }
+            window.addEventListener('scroll', update, { passive: true });
+            window.addEventListener('resize', update, { passive: true });
+            update();
+        })();
+    </script>
 </article>
 {% endblock %}
