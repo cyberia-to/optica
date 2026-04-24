@@ -637,9 +637,18 @@
       .slice(0, Math.max(0, maxNodes - 1));
     const keep = new Set([centerId, ...ranked]);
 
-    const nodes = Array.from(keep).map(id => ({
-      id, title: nodeMap[id].title, url: nodeMap[id].url, current: id === centerId
-    }));
+    const nodes = Array.from(keep).map(id => {
+      const n = nodeMap[id];
+      return {
+        id,
+        title: n.title,
+        url: n.url,
+        current: id === centerId,
+        focus: typeof n.focus === 'number' ? n.focus : 0,
+        pageRank: typeof n.pageRank === 'number' ? n.pageRank : 0,
+        hop: hop[id] || 0,
+      };
+    });
     const edges = graph.edges.filter(e => {
       const s = typeof e.source === 'object' ? e.source.id : e.source;
       const t = typeof e.target === 'object' ? e.target.id : e.target;
@@ -661,62 +670,160 @@
   }
 
   function renderMinimap(data) {
-    const w = container.clientWidth || 280;
-    const h = 200;
+    const w = container.clientWidth || 720;
+    const h = 460;
+    const pad = 36;
+
+    // Node radius driven by focus (pi share) with pageRank as a gentle
+    // fallback; current page always largest so the eye lands on it.
+    const maxFocus = Math.max(0.0001, ...data.nodes.map(n => n.focus || 0));
+    const radius = d => {
+      if (d.current) return 11;
+      const f = (d.focus || d.pageRank || 0) / maxFocus;
+      return 4 + Math.sqrt(f) * 6; // 4 .. 10
+    };
 
     const svg = d3.select(container)
       .append('svg')
       .attr('width', w)
-      .attr('height', h);
+      .attr('height', h)
+      .attr('viewBox', [0, 0, w, h])
+      .style('display', 'block')
+      .style('max-width', '100%');
+
+    // Adjacency for hover emphasis.
+    const neighbors = {};
+    data.nodes.forEach(n => { neighbors[n.id] = new Set([n.id]); });
+    data.edges.forEach(e => {
+      const s = typeof e.source === 'object' ? e.source.id : e.source;
+      const t = typeof e.target === 'object' ? e.target.id : e.target;
+      neighbors[s] && neighbors[s].add(t);
+      neighbors[t] && neighbors[t].add(s);
+    });
 
     const g = svg.append('g');
 
     const simulation = d3.forceSimulation(data.nodes)
-      .force('link', d3.forceLink(data.edges).id(d => d.id).distance(40).strength(0.5))
-      .force('charge', d3.forceManyBody().strength(-60))
-      .force('center', d3.forceCenter(w / 2, h / 2))
-      .force('collision', d3.forceCollide(8));
+      .force('link', d3.forceLink(data.edges).id(d => d.id).distance(90).strength(0.55))
+      .force('charge', d3.forceManyBody().strength(-320))
+      .force('x', d3.forceX(w / 2).strength(0.04))
+      .force('y', d3.forceY(h / 2).strength(0.04))
+      .force('collision', d3.forceCollide(d => radius(d) + 6));
+
+    // Compute scale + translation so the node bbox fills the viewport on
+    // every tick. Without this, even strong repulsion leaves a tight
+    // cluster in the middle; with it the graph always uses all the space.
+    function fit() {
+      if (!data.nodes.length) return { scale: 1, tx: 0, ty: 0 };
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const n of data.nodes) {
+        if (typeof n.x !== 'number' || typeof n.y !== 'number') continue;
+        if (n.x < minX) minX = n.x;
+        if (n.x > maxX) maxX = n.x;
+        if (n.y < minY) minY = n.y;
+        if (n.y > maxY) maxY = n.y;
+      }
+      if (!isFinite(minX)) return { scale: 1, tx: 0, ty: 0 };
+      const bw = Math.max(1, maxX - minX);
+      const bh = Math.max(1, maxY - minY);
+      const scale = Math.min((w - pad * 2) / bw, (h - pad * 2) / bh, 3.5);
+      return {
+        scale,
+        tx: (w - bw * scale) / 2 - minX * scale,
+        ty: (h - bh * scale) / 2 - minY * scale,
+      };
+    }
+    let current = fit();
 
     const link = g.append('g')
+      .attr('stroke', 'var(--color-text)')
+      .attr('stroke-opacity', 0.18)
+      .attr('stroke-width', 1)
       .selectAll('line')
       .data(data.edges)
-      .join('line')
-      .attr('stroke', 'var(--color-border)')
-      .attr('stroke-opacity', 0.5);
+      .join('line');
 
     const node = g.append('g')
       .selectAll('circle')
       .data(data.nodes)
       .join('circle')
-      .attr('r', d => d.current ? 6 : 4)
+      .attr('r', radius)
       .attr('fill', d => d.current ? 'var(--color-primary)' : 'var(--color-secondary)')
-      .attr('fill-opacity', d => d.current ? 1 : 0.6)
+      .attr('fill-opacity', d => d.current ? 1 : 0.8)
+      .attr('stroke', d => d.current ? 'var(--color-primary)' : 'transparent')
+      .attr('stroke-width', d => d.current ? 2 : 0)
+      .attr('stroke-opacity', 0.4)
       .style('cursor', 'pointer')
-      .on('click', (event, d) => { window.location.href = d.url; });
+      .on('click', (event, d) => { window.location.href = d.url; })
+      .call(d3.drag()
+        .on('start', (event, d) => {
+          if (!event.active) simulation.alphaTarget(0.3).restart();
+          d.fx = d.x; d.fy = d.y;
+        })
+        .on('drag', (event, d) => {
+          // event.x/y are in SVG coords; simulation works in its own
+          // frame, so reverse the current fit transform before pinning.
+          d.fx = (event.x - current.tx) / current.scale;
+          d.fy = (event.y - current.ty) / current.scale;
+        })
+        .on('end', (event, d) => {
+          if (!event.active) simulation.alphaTarget(0);
+          d.fx = null; d.fy = null;
+        }));
 
     const label = g.append('g')
+      .attr('font-family', 'inherit')
+      .attr('font-size', '11px')
+      .attr('fill', 'var(--color-text)')
+      .attr('text-anchor', 'middle')
+      .style('paint-order', 'stroke')
+      .attr('stroke', 'var(--color-bg)')
+      .attr('stroke-width', 3)
+      .attr('stroke-linejoin', 'round')
       .selectAll('text')
       .data(data.nodes)
       .join('text')
-      .text(d => d.title.length > 15 ? d.title.slice(0, 13) + '\u2026' : d.title)
-      .attr('font-size', '8px')
-      .attr('fill', 'var(--color-text)')
-      .attr('text-anchor', 'middle')
-      .attr('dy', d => d.current ? -10 : -8)
+      .text(d => d.title.length > 22 ? d.title.slice(0, 20) + '\u2026' : d.title)
+      .attr('font-weight', d => d.current ? 700 : 400)
       .style('pointer-events', 'none');
 
+    // Hover: highlight node, its neighbors, and the edges between. Dim rest.
+    function onEnter(event, d) {
+      const near = neighbors[d.id];
+      node.attr('fill-opacity', n => near.has(n.id) ? 1 : 0.15)
+          .attr('stroke', n => n.id === d.id ? 'var(--color-primary)' : (n.current ? 'var(--color-primary)' : 'transparent'))
+          .attr('stroke-width', n => n.id === d.id ? 2 : (n.current ? 2 : 0))
+          .attr('stroke-opacity', n => n.id === d.id ? 0.9 : 0.4);
+      link.attr('stroke-opacity', e => {
+        const s = typeof e.source === 'object' ? e.source.id : e.source;
+        const t = typeof e.target === 'object' ? e.target.id : e.target;
+        return (s === d.id || t === d.id) ? 0.6 : 0.05;
+      });
+      label.attr('fill-opacity', n => near.has(n.id) ? 1 : 0.25);
+    }
+    function onLeave() {
+      node.attr('fill-opacity', d => d.current ? 1 : 0.8)
+          .attr('stroke', d => d.current ? 'var(--color-primary)' : 'transparent')
+          .attr('stroke-width', d => d.current ? 2 : 0);
+      link.attr('stroke-opacity', 0.18);
+      label.attr('fill-opacity', 1);
+    }
+    node.on('mouseenter', onEnter).on('mouseleave', onLeave);
+
     simulation.on('tick', () => {
+      current = fit();
+      const s = current.scale, tx = current.tx, ty = current.ty;
       link
-        .attr('x1', d => d.source.x)
-        .attr('y1', d => d.source.y)
-        .attr('x2', d => d.target.x)
-        .attr('y2', d => d.target.y);
+        .attr('x1', d => d.source.x * s + tx)
+        .attr('y1', d => d.source.y * s + ty)
+        .attr('x2', d => d.target.x * s + tx)
+        .attr('y2', d => d.target.y * s + ty);
       node
-        .attr('cx', d => d.x)
-        .attr('cy', d => d.y);
+        .attr('cx', d => d.x * s + tx)
+        .attr('cy', d => d.y * s + ty);
       label
-        .attr('x', d => d.x)
-        .attr('y', d => d.y);
+        .attr('x', d => d.x * s + tx)
+        .attr('y', d => d.y * s + ty - radius(d) - 4);
     });
   }
 })();
