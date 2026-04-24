@@ -67,59 +67,30 @@
    PAGE TRANSITIONS
    ============================================================ */
 
-/* Native View Transitions API (Chrome 111+, Safari 18+) */
+/* Native cross-document View Transitions (Chrome 126+, Safari 18+).
+   Strategy: isolate only .main-content as the animated region. Everything
+   else (header, sidebar) stays in root and, since those regions render
+   identically across pages, no visible motion occurs there. */
 @view-transition {
     navigation: auto;
 }
 
-::view-transition-old(root) {
-    animation: fade-out 0.15s ease-out;
-}
-
+/* One crossfade for the entire page. plus-lighter keeps the summed
+   opacity of old+new at 1 throughout, so no midpoint gap. Regions that
+   look identical on both pages (sidebar, header) render as themselves
+   with zero visible motion — only the bits that actually change animate. */
+::view-transition-old(root),
 ::view-transition-new(root) {
-    animation: fade-in 0.2s ease-in;
+    animation-duration: 220ms;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    mix-blend-mode: plus-lighter;
 }
 
-@keyframes fade-out {
-    from {
-        opacity: 1;
-    }
-    to {
-        opacity: 0;
-    }
-}
-
-@keyframes fade-in {
-    from {
-        opacity: 0;
-    }
-    to {
-        opacity: 1;
-    }
-}
-
-/* JS fallback for browsers without View Transitions */
-.main-content {
-    animation: page-enter 0.25s ease-out;
-}
-
-@keyframes page-enter {
-    from {
-        opacity: 0;
-        transform: translateY(6px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-.main-content.navigating {
-    opacity: 0;
-    transform: translateY(-4px);
-    transition:
-        opacity 0.15s ease,
-        transform 0.15s ease;
+/* Keep scrollbar width stable so sidebar/header don't shift when page
+   content is shorter or longer than the viewport. This is the most common
+   source of perceived "jumping" during navigation. */
+html {
+    scrollbar-gutter: stable;
 }
 
 /* ============================================================

@@ -42,9 +42,19 @@
             name="twitter:description"
             content="{{ description }}"
         />
-        <meta
-            name="view-transition"
-            content="same-origin"
+        <link
+            rel="preload"
+            as="font"
+            type="font/woff2"
+            href="/static/fonts/play-400-latin.woff2"
+            crossorigin
+        />
+        <link
+            rel="preload"
+            as="font"
+            type="font/woff2"
+            href="/static/fonts/play-700-latin.woff2"
+            crossorigin
         />
         <link rel="stylesheet" href="/static/style.css" />
         <link
@@ -202,47 +212,35 @@
             );
         </script>
         <script>
-            // Smooth page transition fallback for browsers without View Transitions API
+            // Prefetch same-origin links on hover so navigation lands on a
+            // cached response. Native View Transitions then crossfades the
+            // paint instantly instead of waiting for the round-trip.
             (function () {
-                if (document.startViewTransition) return; // native support, no need for fallback
+                var seen = new Set();
                 document.addEventListener(
-                    "click",
+                    "mouseover",
                     function (e) {
-                        var link = e.target.closest("a");
-                        if (!link || !link.href) return;
+                        var a = e.target.closest("a[href]");
+                        if (!a) return;
                         if (
-                            link.target === "_blank" ||
-                            link.hasAttribute("download")
-                        )
-                            return;
-                        if (
-                            e.ctrlKey ||
-                            e.metaKey ||
-                            e.shiftKey
+                            a.target === "_blank" ||
+                            a.hasAttribute("download")
                         )
                             return;
                         try {
-                            var url = new URL(link.href);
-                            if (
-                                url.origin !==
-                                location.origin
-                            )
-                                return;
-                        } catch (err) {
-                            return;
-                        }
-                        var content =
-                            document.querySelector(
-                                ".main-content",
-                            );
-                        if (!content) return;
-                        e.preventDefault();
-                        content.classList.add("navigating");
-                        setTimeout(function () {
-                            window.location.href =
-                                link.href;
-                        }, 150);
+                            var u = new URL(a.href);
+                            if (u.origin !== location.origin) return;
+                            if (u.pathname === location.pathname) return;
+                            if (seen.has(u.href)) return;
+                            seen.add(u.href);
+                            var link = document.createElement("link");
+                            link.rel = "prefetch";
+                            link.as = "document";
+                            link.href = u.href;
+                            document.head.appendChild(link);
+                        } catch (err) {}
                     },
+                    { passive: true },
                 );
             })();
         </script>
