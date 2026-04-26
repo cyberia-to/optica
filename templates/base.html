@@ -212,18 +212,18 @@
             );
         </script>
         <script>
-            // Intent-debounced link prefetch with full cancellation.
-            //
-            // Race we're avoiding: hover triggers a <link rel=prefetch>
-            // that is still in-flight when the click lands. Some
-            // browsers intermittently drop the click when a prefetch
-            // for the same URL is pending — this is the "1 in 10 click
-            // does nothing" bug. Cancelling the timer isn't enough
-            // once the prefetch tag has been appended; we also have
-            // to remove the tag so the fetch itself aborts.
+            // Intent-debounced link prefetch. Hover for >120ms warms
+            // the cache so the click lands on a response that's
+            // already on its way. We DON'T cancel an in-flight
+            // prefetch on click: removing the <link rel=prefetch>
+            // mid-flight made the browser confuse the aborted load
+            // with the click's navigation, breaking heavy pages like
+            // /graph (whose 8MB graph-data.js gets pre-fetched too).
+            // The original click-drop bug we were guarding against
+            // turned out to be View Transitions, not the prefetch.
             (function () {
-                var pending = null;                  // { href, timer }
-                var injected = Object.create(null);  // href → <link> element
+                var seen = Object.create(null);
+                var pending = null;
                 var DELAY = 120;
                 function shouldPrefetch(a) {
                     if (!a || !a.href) return null;
@@ -232,40 +232,33 @@
                         var u = new URL(a.href);
                         if (u.origin !== location.origin) return null;
                         if (u.pathname === location.pathname) return null;
+                        // Heavy pages embed multi-megabyte inline data
+                        // (/graph and /tags ship the full graph;
+                        // /files lists 22k rows). Pre-fetching these
+                        // while hovering tangles up with the click
+                        // navigation and leaves the link stuck on
+                        // the first click — second click "works"
+                        // because the prefetch is now complete and
+                        // the browser uses the cache cleanly.
+                        if (/^\/(graph|tags|files)\/?$/.test(u.pathname)) return null;
                         return u.href;
                     } catch (err) {
                         return null;
                     }
                 }
                 function startPrefetch(href) {
-                    if (injected[href]) return;
+                    if (seen[href]) return;
+                    seen[href] = true;
                     var link = document.createElement("link");
                     link.rel = "prefetch";
                     link.href = href;
                     document.head.appendChild(link);
-                    injected[href] = link;
                 }
                 function cancelPending() {
                     if (pending) {
                         clearTimeout(pending.timer);
                         pending = null;
                     }
-                }
-                // On click: cancel any queued prefetch AND abort any
-                // in-flight one for the clicked href so the browser's
-                // navigation isn't competing with a loader it started.
-                function onClickCancel(e) {
-                    cancelPending();
-                    var a = e && e.target && e.target.closest && e.target.closest("a[href]");
-                    if (!a) return;
-                    try {
-                        var u = new URL(a.href);
-                        var injectedLink = injected[u.href];
-                        if (injectedLink && injectedLink.parentNode) {
-                            injectedLink.parentNode.removeChild(injectedLink);
-                        }
-                        delete injected[u.href];
-                    } catch (err) {}
                 }
                 document.addEventListener("pointerover", function (e) {
                     var a = e.target.closest && e.target.closest("a[href]");
@@ -287,9 +280,6 @@
                     if (pending && pending.href && !a.href.endsWith(pending.href)) return;
                     cancelPending();
                 }, { passive: true });
-                // Use pointerdown (fires before click) so the
-                // in-flight <link> is gone before navigation starts.
-                document.addEventListener("pointerdown", onClickCancel, { passive: true });
             })();
         </script>
     </body>
