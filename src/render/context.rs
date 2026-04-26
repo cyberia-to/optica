@@ -326,13 +326,8 @@ pub fn build_page_context(
     let nav_menu = resolve_nav_menu(config, store);
 
     // Generate TOC HTML if page has headings.
-    // Prepend the page title as the synthetic root so every TOC has
-    // a stable depth-1 anchor — body markdown often starts at
-    // unexpected levels (h3 first, h2 mixed with h1) and we don't
-    // want the visual hierarchy to start mid-air.
     let toc_html = if toc_entries.len() >= 2 {
-        let display = page.meta.title.rsplit('/').next().unwrap_or(&page.meta.title);
-        toc::render_toc_html(toc_entries, Some(display))
+        toc::render_toc_html(toc_entries, None)
     } else {
         String::new()
     };
