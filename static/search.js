@@ -55,6 +55,13 @@
       var base = 100 + q.length * 10;
       if (idx === 0) base += 50;
       else if (isWordBoundary(t, idx)) base += 30;
+      // Coverage bonus: rewards a query that consumes most/all of
+      // the target. Without this "cyb" matched "cyb" and
+      // "cyber/whitepaper" with the same score (both got start-of-
+      // string + length), so the longer-named pages outscored the
+      // exact-title page once excerpt/tag noise was added in.
+      var coverage = q.length / t.length;
+      base += coverage * 60;
       return base;
     }
 
