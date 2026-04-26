@@ -590,58 +590,104 @@ hr {
 }
 
 /* ============================================================
-   TOP NAV — primary site functions, hint at what this site is for
+   TOP NAV — primary functions as a small constellation. Graph is
+   the bold central orb, Files and Blog flank it as satellites.
    ============================================================ */
 
 .top-nav {
     position: fixed;
-    top: 0.65rem;
+    top: 0.6rem;
     left: 50%;
     transform: translateX(-50%);
     z-index: 25;
     display: flex;
-    gap: 0.5rem;
-    padding: 0.25rem 0.4rem;
-    background: color-mix(in srgb, var(--color-bg) 80%, transparent);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
+    align-items: center;
+    gap: 1.1rem;
+    pointer-events: none;
 }
 
-.top-nav-item {
+.top-nav-orb {
+    pointer-events: auto;
+    position: relative;
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.3rem 0.85rem;
-    border-radius: 999px;
+    justify-content: center;
+    border-radius: 50%;
+    background: radial-gradient(
+        circle at 50% 38%,
+        color-mix(in srgb, var(--color-bg) 80%, transparent) 0%,
+        color-mix(in srgb, var(--color-bg) 95%, transparent) 70%
+    );
     color: var(--color-text);
-    opacity: 0.7;
     text-decoration: none;
-    font-size: 0.82rem;
-    letter-spacing: 0.02em;
-    transition: opacity 0.18s ease, background 0.18s ease, color 0.18s ease;
+    box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--color-primary) 25%, transparent),
+        0 0 14px color-mix(in srgb, var(--color-primary) 18%, transparent);
+    transition:
+        transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+        box-shadow 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+        color 0.22s ease;
 }
 
-.top-nav-item:hover {
-    opacity: 1;
-    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
-}
-
-.top-nav-item.active {
-    opacity: 1;
+.top-nav-orb:hover {
+    transform: translateY(-1px);
     color: var(--color-primary);
-    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--color-primary) 60%, transparent),
+        0 0 22px color-mix(in srgb, var(--color-primary) 45%, transparent);
 }
 
-.top-nav-icon {
-    font-size: 0.95em;
+.top-nav-orb.active {
+    color: var(--color-primary);
+    box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--color-primary) 80%, transparent),
+        0 0 28px color-mix(in srgb, var(--color-primary) 55%, transparent),
+        0 0 60px color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+/* Bold central orb — the main function. */
+.top-nav-orb--main {
+    width: 3.4rem;
+    height: 3.4rem;
+}
+.top-nav-orb--main .top-nav-glyph {
+    font-size: 1.5rem;
+}
+
+/* Satellites flanking the main orb. */
+.top-nav-orb--sat {
+    width: 2.2rem;
+    height: 2.2rem;
+}
+.top-nav-orb--sat .top-nav-glyph {
+    font-size: 1rem;
+}
+
+.top-nav-glyph {
     line-height: 1;
 }
 
-@media (max-width: 640px) {
-    .top-nav-label { display: none; }
-    .top-nav-item { padding: 0.3rem 0.6rem; }
+/* Names sit underneath the orbs, only on hover/active so the cluster
+   stays visually quiet by default. */
+.top-nav-name {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(-2px);
+    margin-top: 0.25rem;
+    padding: 0.05rem 0.5rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    color: var(--color-primary);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    white-space: nowrap;
+}
+.top-nav-orb:hover .top-nav-name,
+.top-nav-orb.active .top-nav-name {
+    opacity: 0.85;
+    transform: translateX(-50%) translateY(0);
 }
 
 /* ============================================================

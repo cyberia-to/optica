@@ -82,23 +82,24 @@
     </nav>
 </aside>
 
-<!-- Primary functions of the site, fixed at top-center: Files (the
-     full index), Graph (the visualization), Blog (the chronological
-     stream). Hints what this site is for the moment a visitor lands. -->
+<!-- Primary functions, rendered as a small constellation: Graph is
+     the bold central orb, Files and Blog flank it as satellite apps.
+     Mimics a space-themed app launcher — hints at what this site is
+     the moment a visitor lands. -->
 <nav class="top-nav" aria-label="Site sections">
-    <a href="/files" class="top-nav-item">
-        <span class="top-nav-icon">&#x1F4D1;</span>
-        <span class="top-nav-label">Files</span>
+    <a href="/files" class="top-nav-orb top-nav-orb--sat" title="Files">
+        <span class="top-nav-glyph">&#x1F4D1;</span>
+        <span class="top-nav-name">Files</span>
     </a>
     {% if graph is defined and graph.enabled %}
-    <a href="/graph" class="top-nav-item">
-        <span class="top-nav-icon">&#x1F578;&#xFE0F;</span>
-        <span class="top-nav-label">Graph</span>
+    <a href="/graph" class="top-nav-orb top-nav-orb--main" title="Graph">
+        <span class="top-nav-glyph">&#x1F578;&#xFE0F;</span>
+        <span class="top-nav-name">Graph</span>
     </a>
     {% endif %}
-    <a href="/blog" class="top-nav-item">
-        <span class="top-nav-icon">&#x1F4DD;</span>
-        <span class="top-nav-label">Blog</span>
+    <a href="/blog" class="top-nav-orb top-nav-orb--sat" title="Blog">
+        <span class="top-nav-glyph">&#x1F4DD;</span>
+        <span class="top-nav-name">Blog</span>
     </a>
 </nav>
 
@@ -123,7 +124,7 @@
 
         var path = window.location.pathname;
         document
-            .querySelectorAll(".sidebar-menu a, .top-nav-item")
+            .querySelectorAll(".sidebar-menu a, .top-nav-orb")
             .forEach(function (a) {
                 var href = a.getAttribute("href");
                 if (
