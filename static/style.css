@@ -1524,30 +1524,76 @@ body:has(.fullscreen-viz) .main-content {
     letter-spacing: 0.03em;
 }
 
-/* Graph tag filter */
+/* Graph filter — two-row stack: a dimension switcher above, pills
+   for the active dimension below. Selections in inactive
+   dimensions persist and still affect the filter; only the pills
+   row changes when you switch tabs.
+   Constrained to ~62% of viewport width, centered, so the pills
+   don't overlap the sidebar menu on the left. */
 .graph-filter {
     position: fixed;
     top: 3.5rem;
-    left: 0;
-    width: 100%;
-    overflow-x: auto;
-    scrollbar-width: none;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 62%;
+    max-width: 62vw;
     z-index: 35;
-    padding: 0.3rem 1rem;
-    text-align: center;
-    white-space: nowrap;
+    padding: 0.4rem 1rem 0.3rem;
     pointer-events: none;
 }
 
-.graph-filter::-webkit-scrollbar {
-    display: none;
+.graph-filter-tabs {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+    margin-bottom: 0.35rem;
+}
+
+.graph-filter-tab {
+    pointer-events: auto;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    border: 1px solid color-mix(in srgb, var(--color-text) 18%, transparent);
+    background: color-mix(in srgb, var(--color-bg) 70%, transparent);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    color: var(--color-text);
+    opacity: 0.55;
+    transition: opacity 0.12s ease, border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.graph-filter-tab:hover {
+    opacity: 0.9;
+}
+
+.graph-filter-tab.has-selection {
+    border-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
+    color: var(--color-primary);
+    opacity: 0.95;
+}
+
+.graph-filter-tab.active {
+    opacity: 1;
+    border-color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg));
+}
+
+.graph-filter-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding-bottom: 0.25rem;
+    justify-content: center;
 }
 
 .graph-filter-pill {
-    display: inline-block;
+    flex: 0 0 auto;
     font-size: 0.7rem;
-    padding: 0.25rem 0.7rem;
-    margin: 0 0.15rem;
+    padding: 0.22rem 0.7rem;
     border-radius: 1rem;
     border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
     background: color-mix(in srgb, var(--color-bg) 70%, transparent);
@@ -1556,7 +1602,7 @@ body:has(.fullscreen-viz) .main-content {
     color: var(--color-text);
     opacity: 0.7;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: opacity 0.15s, border-color 0.15s, background 0.15s, color 0.15s;
     font-family: inherit;
     letter-spacing: 0.03em;
     white-space: nowrap;
@@ -1583,8 +1629,21 @@ body:has(.fullscreen-viz) .main-content {
     padding-bottom: 4rem;
 }
 
+.files-stats-top {
+    color: var(--color-primary);
+    font-size: 0.85rem;
+    letter-spacing: 0.03em;
+    padding: 0.4rem 0;
+    margin-bottom: 0.5rem;
+    text-align: center;
+}
+
 .pages-table {
     width: 100%;
+    /* fixed layout — columns take exactly the widths declared below
+       and the title column gets whatever is left, so the table never
+       grows wider than its container (.main-content's max-width). */
+    table-layout: fixed;
     border-collapse: collapse;
     font-size: 0.88rem;
     border-spacing: 0;
@@ -1629,9 +1688,12 @@ body:has(.fullscreen-viz) .main-content {
 }
 
 .pages-table .page-row {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 2rem;
-    transition: background 0.15s ease;
+    /* content-visibility: auto on 22k rows makes hover feel laggy —
+       the browser is paint-deferring offscreen rows and has to do
+       a layout pass before reacting to hover. The cost of always-
+       laying-out is small for a flat table; the hover responsiveness
+       is worth far more. */
+    transition: background 0.05s ease;
 }
 
 .pages-table .page-row:hover {
@@ -1646,13 +1708,39 @@ body:has(.fullscreen-viz) .main-content {
     opacity: 0.5;
 }
 
+/* Rank column hidden so the file column lines up with the search bar
+   above. Row IDs (#r{{rank}}) remain in the DOM for deep links and
+   scroll-position hash tracking. */
 .col-rank {
-    width: 1%;
+    display: none;
+}
+
+/* Title cell: first visible column, no left padding so its content
+   starts flush at the table's left edge (= search bar left edge). */
+.pages-table th.col-title,
+.pages-table td.col-title {
+    padding-left: 0;
+}
+
+/* Title is the elastic column — claim leftover table width and clip
+   long file paths with ellipsis inside. Hover the cell to read the
+   full name via the native title tooltip. */
+.col-title {
+    width: 100%;
+}
+.col-title a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: 100%;
+    overflow: hidden;
+    vertical-align: middle;
+}
+.row-title-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
-    opacity: 0.2;
-    font-size: 0.75rem;
-    font-variant-numeric: tabular-nums;
-    transition: opacity 0.15s ease;
+    min-width: 0;
 }
 
 .col-size,
@@ -1662,7 +1750,6 @@ body:has(.fullscreen-viz) .main-content {
 .col-gravity,
 .col-created,
 .col-modified {
-    width: 1%;
     white-space: nowrap;
     text-align: right;
     font-variant-numeric: tabular-nums;
@@ -1670,6 +1757,17 @@ body:has(.fullscreen-viz) .main-content {
     padding-left: 0.3rem !important;
     padding-right: 0.3rem !important;
 }
+
+/* Explicit widths for numeric columns under table-layout: fixed.
+   These together with col-title (auto, takes leftover) keep the
+   total within the parent's 48rem cap. */
+.pages-table .col-created  { width: 3.6rem; }
+.pages-table .col-modified { width: 3.6rem; }
+.pages-table .col-size     { width: 3.6rem; }
+.pages-table .col-links    { width: 2.6rem; }
+.pages-table .col-pagerank { width: 2.6rem; }
+.pages-table .col-density  { width: 2.8rem; }
+.pages-table .col-gravity  { width: 2.8rem; }
 
 .col-density,
 .col-gravity {

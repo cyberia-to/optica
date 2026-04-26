@@ -5,6 +5,7 @@
 
 {% block content %}
 <div class="pages-discovery">
+  <div class="files-stats-top">{{ total_files }} files &middot; {{ total_connections }} connections</div>
   <table class="pages-table">
     <thead>
       <tr>
@@ -40,7 +41,6 @@
       {% endfor %}
     </tbody>
   </table>
-  <div class="graph-stats">{{ total_files }} files &middot; {{ total_connections }} connections</div>
 </div>
 
 <script>
