@@ -590,25 +590,25 @@ hr {
 }
 
 /* ============================================================
-   TOP NAV — primary functions as a small constellation. Graph is
-   the bold central orb, Files and Blog flank it as satellites.
+   APP ORBS — primary functions as a small constellation in the
+   bottom-left corner. Graph is the bold central orb; Files and
+   Blog flank it as satellites at offset positions, so the cluster
+   reads as a launcher, not a flat menu.
    ============================================================ */
 
-.top-nav {
+.app-orbs {
     position: fixed;
-    top: 0.6rem;
-    left: 50%;
-    transform: translateX(-50%);
+    bottom: 1.25rem;
+    left: 1.25rem;
     z-index: 25;
-    display: flex;
-    align-items: center;
-    gap: 1.1rem;
+    width: 8rem;
+    height: 7rem;
     pointer-events: none;
 }
 
-.top-nav-orb {
+.app-orb {
     pointer-events: auto;
-    position: relative;
+    position: absolute;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -621,60 +621,60 @@ hr {
     color: var(--color-text);
     text-decoration: none;
     box-shadow:
-        0 0 0 1px color-mix(in srgb, var(--color-primary) 25%, transparent),
-        0 0 14px color-mix(in srgb, var(--color-primary) 18%, transparent);
+        0 0 0 1px color-mix(in srgb, var(--color-primary) 28%, transparent),
+        0 0 14px color-mix(in srgb, var(--color-primary) 20%, transparent);
     transition:
         transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
         box-shadow 0.22s cubic-bezier(0.22, 1, 0.36, 1),
         color 0.22s ease;
 }
 
-.top-nav-orb:hover {
-    transform: translateY(-1px);
+.app-orb:hover {
+    transform: translateY(-1px) scale(1.04);
     color: var(--color-primary);
     box-shadow:
-        0 0 0 1px color-mix(in srgb, var(--color-primary) 60%, transparent),
-        0 0 22px color-mix(in srgb, var(--color-primary) 45%, transparent);
+        0 0 0 1px color-mix(in srgb, var(--color-primary) 65%, transparent),
+        0 0 22px color-mix(in srgb, var(--color-primary) 50%, transparent);
+    z-index: 2;
 }
 
-.top-nav-orb.active {
+.app-orb.active {
     color: var(--color-primary);
     box-shadow:
-        0 0 0 1px color-mix(in srgb, var(--color-primary) 80%, transparent),
-        0 0 28px color-mix(in srgb, var(--color-primary) 55%, transparent),
-        0 0 60px color-mix(in srgb, var(--color-primary) 18%, transparent);
+        0 0 0 1px color-mix(in srgb, var(--color-primary) 85%, transparent),
+        0 0 28px color-mix(in srgb, var(--color-primary) 60%, transparent),
+        0 0 60px color-mix(in srgb, var(--color-primary) 22%, transparent);
 }
 
-/* Bold central orb — the main function. */
-.top-nav-orb--main {
-    width: 3.4rem;
-    height: 3.4rem;
+.app-orb--main {
+    width: 3.6rem;
+    height: 3.6rem;
 }
-.top-nav-orb--main .top-nav-glyph {
-    font-size: 1.5rem;
-}
+.app-orb--main .app-orb-glyph { font-size: 1.55rem; }
 
-/* Satellites flanking the main orb. */
-.top-nav-orb--sat {
+.app-orb--sat {
     width: 2.2rem;
     height: 2.2rem;
 }
-.top-nav-orb--sat .top-nav-glyph {
-    font-size: 1rem;
-}
+.app-orb--sat .app-orb-glyph { font-size: 1rem; }
 
-.top-nav-glyph {
-    line-height: 1;
-}
+/* Constellation positions — graph anchored bottom-left, files and
+   blog scattered above and to the right so the cluster looks
+   slightly organic rather than a row of buttons. */
+.app-orb--graph { bottom: 0; left: 0; }
+.app-orb--files { bottom: 4rem; left: 0.7rem; }
+.app-orb--blog  { bottom: 2.4rem; left: 4.1rem; }
 
-/* Names sit underneath the orbs, only on hover/active so the cluster
-   stays visually quiet by default. */
-.top-nav-name {
+.app-orb-glyph { line-height: 1; }
+
+/* Name labels appear to the right of each orb on hover/active so
+   the cluster stays quiet at rest but every orb is identifiable. */
+.app-orb-name {
     position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%) translateY(-2px);
-    margin-top: 0.25rem;
+    left: 100%;
+    top: 50%;
+    transform: translateY(-50%) translateX(-4px);
+    margin-left: 0.5rem;
     padding: 0.05rem 0.5rem;
     font-size: 0.7rem;
     letter-spacing: 0.04em;
@@ -684,10 +684,10 @@ hr {
     transition: opacity 0.18s ease, transform 0.18s ease;
     white-space: nowrap;
 }
-.top-nav-orb:hover .top-nav-name,
-.top-nav-orb.active .top-nav-name {
-    opacity: 0.85;
-    transform: translateX(-50%) translateY(0);
+.app-orb:hover .app-orb-name,
+.app-orb.active .app-orb-name {
+    opacity: 0.9;
+    transform: translateY(-50%) translateX(0);
 }
 
 /* ============================================================
@@ -1731,7 +1731,7 @@ body:has(.fullscreen-viz) .main-content {
    don't overlap the sidebar menu on the left. */
 .graph-filter {
     position: fixed;
-    top: 3.5rem;
+    top: 1rem;
     left: 50%;
     transform: translateX(-50%);
     width: 62%;
