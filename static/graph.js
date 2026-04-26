@@ -396,9 +396,9 @@
           const tid = e.target.id || e.target;
           return visibleNodes.has(sid) || visibleNodes.has(tid);
         }).length;
-        stats.innerHTML = visibleNodes.size + ' / ' + data.nodes.length + ' pages &middot; ' + visEdges + ' connections';
+        stats.innerHTML = visibleNodes.size + ' / ' + data.nodes.length + ' files &middot; ' + visEdges + ' connections';
       } else {
-        stats.innerHTML = data.nodes.length + ' pages &middot; ' + data.edges.length + ' connections';
+        stats.innerHTML = data.nodes.length + ' files &middot; ' + data.edges.length + ' connections';
       }
     }
 
@@ -942,7 +942,7 @@
     }
 
     // Stats (appended early so filter UI can update it)
-    stats.innerHTML = data.nodes.length + ' pages &middot; ' + data.edges.length + ' connections';
+    stats.innerHTML = data.nodes.length + ' files &middot; ' + data.edges.length + ' connections';
     container.appendChild(stats);
   }
 })();
