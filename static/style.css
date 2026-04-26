@@ -371,24 +371,31 @@ hr {
    HEADER — COMMANDER
    ============================================================ */
 
+/* Bottom-anchored, only as wide as its content, centered.
+   Full-width was painting a backdrop strip across the bottom and
+   covering anything sitting in the corners (e.g. the app orbs).
+   The bar is now a self-contained widget that doesn't paint outside
+   its own box. */
 .site-header {
     position: fixed;
-    left: 0;
-    right: 0;
+    left: 50%;
     bottom: 0;
     top: auto;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: var(--max-width, 48rem);
     z-index: 30;
     background: color-mix(in srgb, var(--color-bg) 88%, transparent);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     padding: 0.75rem 1rem;
     pointer-events: auto;
+    border-radius: 8px 8px 0 0;
 }
 
 .header-inner {
-    max-width: var(--max-width, 48rem);
     width: 100%;
-    margin: 0 auto;
+    margin: 0;
 }
 
 .header-search {
@@ -441,16 +448,18 @@ hr {
     background: linear-gradient(
         180deg,
         rgba(128, 0, 255, 0) 0%,
-        rgba(128, 0, 255, 0.15) 30%,
-        rgba(168, 85, 247, 0.35) 100%
+        rgba(128, 0, 255, 0.18) 30%,
+        rgba(168, 85, 247, 0.42) 100%
     );
-    border-bottom: 2px solid rgba(168, 85, 247, 0.9);
+    border-bottom: 2px solid rgba(168, 85, 247, 0.95);
+    /* Glow stays inside the bar: a tight outer hairline + an inset
+       wash. The previous 80px outward halo bled across the rest of
+       the screen, e.g. over the bottom-left app orbs — the search
+       must not paint anything visible outside its own bar. */
     box-shadow:
-        0 1px 0 rgba(168, 85, 247, 0.8),
-        0 0 8px rgba(168, 85, 247, 0.7),
-        0 0 20px rgba(168, 85, 247, 0.5),
-        0 0 40px rgba(168, 85, 247, 0.3),
-        0 0 80px rgba(168, 85, 247, 0.15);
+        0 1px 0 rgba(168, 85, 247, 0.9),
+        inset 0 -8px 18px rgba(168, 85, 247, 0.35),
+        inset 0 -1px 0 rgba(168, 85, 247, 0.6);
     opacity: 0;
     transition: opacity 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
