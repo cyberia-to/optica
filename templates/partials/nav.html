@@ -48,6 +48,10 @@
         {% if nav_menu is defined and nav_menu %}
         <ul class="sidebar-menu">
             {% for item in nav_menu %}
+            {# Skip the first item if it duplicates the site title —
+               the title now carries that item's icon, a separate
+               row below would be redundant. #}
+            {% if not (loop.first and item.label == site.title) %}
             <li class="sidebar-item">
                 <a
                     href="{{ item.url }}"
@@ -81,6 +85,7 @@
                     >{% endif %}
                 </a>
             </li>
+            {% endif %}
             {% endfor %}
         </ul>
         {% endif %}
