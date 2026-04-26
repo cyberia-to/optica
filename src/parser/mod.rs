@@ -542,6 +542,64 @@ fn rewrite_relative_links(content: &str, page_name: &str, is_readme: bool) -> St
     content.to_string()
 }
 
+/// Demote every ATX heading in `md` by one level (h1→h2, h2→h3, …, h6 stays).
+/// Skips lines inside fenced code blocks so shell `# comments` and the like
+/// aren't accidentally treated as headings.
+pub fn demote_headings(md: &str) -> String {
+    let mut out = String::with_capacity(md.len() + 32);
+    let mut in_fence = false;
+    let mut fence_char: Option<u8> = None;
+    for line in md.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        // Fence open/close detection — supports ``` and ~~~ runs of >= 3.
+        let fence_run = trimmed
+            .as_bytes()
+            .iter()
+            .take_while(|&&b| b == b'`' || b == b'~')
+            .copied()
+            .collect::<Vec<u8>>();
+        if fence_run.len() >= 3 && fence_run.iter().all(|&b| b == fence_run[0]) {
+            if !in_fence {
+                in_fence = true;
+                fence_char = Some(fence_run[0]);
+            } else if fence_char == Some(fence_run[0]) {
+                in_fence = false;
+                fence_char = None;
+            }
+            out.push_str(line);
+            continue;
+        }
+        if !in_fence {
+            let bytes = trimmed.as_bytes();
+            let hashes = bytes.iter().take_while(|&&b| b == b'#').count();
+            if (1..=5).contains(&hashes)
+                && (bytes.get(hashes) == Some(&b' ') || bytes.get(hashes) == Some(&b'\t'))
+            {
+                let leading_ws = line.len() - trimmed.len();
+                out.push_str(&line[..leading_ws]);
+                out.push('#');
+                out.push_str(trimmed);
+                continue;
+            }
+        }
+        out.push_str(line);
+    }
+    out
+}
+
+/// Compose the merged page body for a subgraph declaration.
+/// Root-graph content sits first, then a horizontal rule, then a
+/// level-1 heading naming the subgraph, then the README content
+/// with every heading demoted by one (so a README's own h1s
+/// become h2s under the divider — proper hierarchy).
+pub fn merge_subgraph_content(root_md: &str, subgraph_name: &str, readme_md: &str) -> String {
+    let mut out = String::with_capacity(root_md.len() + readme_md.len() + 64);
+    out.push_str(root_md);
+    out.push_str(&format!("\n\n---\n\n# from subgraph {}\n\n", subgraph_name));
+    out.push_str(&demote_headings(readme_md));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

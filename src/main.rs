@@ -401,15 +401,15 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
                         page.meta.public = decl_page.meta.public;
                         page.meta.icon = decl_page.meta.icon.clone();
                         page.meta.stake = decl_page.meta.stake;
-                        // Root graph content first, then README with explicit header
+                        // Root graph content first, then a level-1 divider,
+                        // then README content with all its headings demoted by 1.
                         if !decl_page.content_md.trim().is_empty() {
                             let readme_content = std::mem::take(&mut page.content_md);
-                            page.content_md = decl_page.content_md.clone();
-                            page.content_md.push_str(&format!(
-                                "\n\n---\n\n## from subgraph {}\n\n",
-                                decl.name
-                            ));
-                            page.content_md.push_str(&readme_content);
+                            page.content_md = optica::parser::merge_subgraph_content(
+                                &decl_page.content_md,
+                                &decl.name,
+                                &readme_content,
+                            );
                         }
                         // Merge outgoing links from the declaring page
                         for link in &decl_page.outgoing_links {
@@ -713,12 +713,11 @@ fn check_site(config: &SiteConfig) -> Result<()> {
                             page.meta.stake = dp.meta.stake;
                             if !dp.content_md.trim().is_empty() {
                                 let readme_content = std::mem::take(&mut page.content_md);
-                                page.content_md = dp.content_md.clone();
-                                page.content_md.push_str(&format!(
-                                    "\n\n---\n\n## from subgraph {}\n\n",
-                                    decl.name
-                                ));
-                                page.content_md.push_str(&readme_content);
+                                page.content_md = optica::parser::merge_subgraph_content(
+                                    &dp.content_md,
+                                    &decl.name,
+                                    &readme_content,
+                                );
                             }
                             for link in &dp.outgoing_links {
                                 if !page.outgoing_links.contains(link) {

@@ -246,12 +246,11 @@ fn watch_and_rebuild_loop(
                             page.meta.stake = dp.meta.stake;
                             if !dp.content_md.trim().is_empty() {
                                 let readme_content = std::mem::take(&mut page.content_md);
-                                page.content_md = dp.content_md.clone();
-                                page.content_md.push_str(&format!(
-                                    "\n\n---\n\n## from subgraph {}\n\n",
-                                    decl.name
-                                ));
-                                page.content_md.push_str(&readme_content);
+                                page.content_md = crate::parser::merge_subgraph_content(
+                                    &dp.content_md,
+                                    &decl.name,
+                                    &readme_content,
+                                );
                             }
                             for link in &dp.outgoing_links {
                                 if !page.outgoing_links.contains(link) {
@@ -669,12 +668,11 @@ fn incremental_rebuild(
                                 page.meta.stake = dp.meta.stake;
                                 if !dp.content_md.trim().is_empty() {
                                     let readme_content = std::mem::take(&mut page.content_md);
-                                    page.content_md = dp.content_md.clone();
-                                    page.content_md.push_str(&format!(
-                                        "\n\n---\n\n## from subgraph {}\n\n",
-                                        decl.name
-                                    ));
-                                    page.content_md.push_str(&readme_content);
+                                    page.content_md = crate::parser::merge_subgraph_content(
+                                        &dp.content_md,
+                                        &decl.name,
+                                        &readme_content,
+                                    );
                                 }
                                 for link in &dp.outgoing_links {
                                     if !page.outgoing_links.contains(link) {
