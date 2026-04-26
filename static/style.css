@@ -605,12 +605,14 @@ hr {
    reads as a launcher, not a flat menu.
    ============================================================ */
 
+/* Container hugs the sidebar's left edge and width so the satellite
+   rows sit on the same column as the sidebar items above them. */
 .app-orbs {
     position: fixed;
     bottom: 1.25rem;
-    left: 1.25rem;
+    left: 0;
     z-index: 25;
-    width: 11rem;
+    width: var(--sidebar-width, 220px);
     height: 17rem;
     pointer-events: none;
 }
@@ -672,23 +674,25 @@ hr {
     filter: drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 45%, transparent));
 }
 
-/* Satellites match the sidebar's row format exactly — same icon
-   size, same gap, same font, same opacity, same active treatment.
-   No border, no glow ring; just emoji + label like every other
-   nav row on the page. The graph orb's prominence comes from
-   being the only "orb" in the cluster, not from the satellites
-   imitating its style. */
+/* Satellites match .sidebar-item a geometry pixel-for-pixel: same
+   gap (0.6rem), same padding (0.45rem 1rem), same opacity (0.7→1),
+   same font-size (0.95rem), same active treatment. The satellite
+   row spans the full sidebar column so its left edge lines up with
+   the sidebar items above. */
 .app-orb--sat {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: 0.6rem;
     padding: 0.45rem 1rem;
     border-radius: 0;
-    width: auto;
+    width: 100%;
     height: auto;
     background: transparent;
     box-shadow: none;
+    color: var(--color-text);
     opacity: 0.7;
+    font-size: 0.95rem;
+    box-sizing: border-box;
     transition: opacity 0.15s ease, background 0.15s ease;
 }
 .app-orb--sat:hover {
@@ -705,7 +709,7 @@ hr {
 }
 .app-orb--sat .app-orb-glyph {
     width: 1.4rem;
-    height: auto;
+    height: 1.4rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -715,9 +719,14 @@ hr {
     border-radius: 0;
     box-shadow: none;
 }
+.app-orb--sat .app-orb-glyph svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
 
 /* Layout — graph anchors the corner, Files + Blog stack above it. */
-.app-orb--graph { bottom: 0; left: 0; }
+.app-orb--graph { bottom: 0; left: 1rem; }
 .app-orb--files { bottom: 14.5rem; left: 0; }
 .app-orb--blog  { bottom: 12.2rem; left: 0; }
 
