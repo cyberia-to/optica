@@ -1,11 +1,14 @@
 {% extends "base.html" %}
 
-{% block title %}Topics — {{ site.title }}{% endblock %}
+{% block title %}Graph — {{ site.title }}{% endblock %}
 
 {% block content %}
+{# /tags merged into /graph — same visualization, tags dimension preselected. #}
+<meta http-equiv="refresh" content="0; url=/graph/?dim=tags" />
+<script>location.replace('/graph/?dim=tags');</script>
 <div class="fullscreen-viz">
-  <div id="topics-graph" class="fullscreen-viz-container"></div>
+  <div id="graph-container" class="fullscreen-viz-container"></div>
 </div>
-<script src="/static/topics.js"></script>
-<script>initTopicsGraph('topics-graph');</script>
+<script src="/static/graph-data.js"></script>
+<script src="/static/graph.js"></script>
 {% endblock %}
