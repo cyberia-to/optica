@@ -95,10 +95,20 @@
     return Math.max(fuzzyMatch(query, target), acronymMatch(query, target));
   }
 
-  // Score = title*3 + bestTag*2 + excerpt + focus_boost.
-  // Summing (rather than max) lets a moderate title match plus a
-  // strong tag match outrank a single mediocre signal — closer to
-  // how a human ranks "this looks relevant from multiple angles".
+  // Score = (title*3 + bestTag*2 + excerpt*0.6) × graphPrior.
+  //
+  // graphPrior folds the tri-kernel focus and gravity percentiles
+  // (pre-computed in Rust, shipped 0..1) into a multiplier on the
+  // text-match score. The old `sqrt(focus)*50` additive boost was
+  // dwarfed by title scores in the 200–400 range — focus values
+  // are tiny fractions (Σ=1 over ~22k pages) so it barely moved
+  // ranking. As a multiplier on already-percentile-normalized
+  // values it has predictable, meaningful effect:
+  //   - bottom-rank page: prior = 0.7
+  //   - median page:      prior = 1.15
+  //   - top hub:          prior = 1.7
+  // A perfect title match still wins outright, but among similarly-
+  // matched pages the more central ones float to the top.
   function scoreEntry(entry, query) {
     var titleScore = bestScore(query, entry.title) * 3;
     var tagScore = 0;
@@ -109,12 +119,12 @@
       }
     }
     var excerptScore = bestScore(query, entry.excerpt || "") * 0.6;
-    var focusBoost = Math.sqrt(entry.focus || 0) * 50;
-    var total = titleScore + tagScore + excerptScore + focusBoost;
-    // Floor: if no signal hit, drop the entry. Focus alone can't
-    // pull an unrelated page into results.
-    if (titleScore + tagScore + excerptScore <= 0) return 0;
-    return total;
+    var matchScore = titleScore + tagScore + excerptScore;
+    if (matchScore <= 0) return 0;
+    var f = entry.focus_pct || 0;
+    var g = entry.gravity_pct || 0;
+    var graphPrior = 0.7 + 0.6 * f + 0.4 * g;
+    return matchScore * graphPrior;
   }
 
   // Highlight every contiguous case-insensitive substring of `query`
