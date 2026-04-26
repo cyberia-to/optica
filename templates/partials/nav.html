@@ -100,7 +100,13 @@
      they arrive. -->
 <nav class="app-orbs" aria-label="Site sections">
     <a href="/files" class="app-orb app-orb--sat app-orb--files" title="Files">
-        <span class="app-orb-glyph">&#x1F4D1;</span>
+        <span class="app-orb-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 3h7l4 4v11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+                <path d="M16 3v4h4" />
+                <path d="M5 7v13a2 2 0 0 0 2 2h10" opacity="0.55" />
+            </svg>
+        </span>
         <span class="app-orb-name">Files</span>
     </a>
     {% if graph is defined and graph.enabled %}
@@ -136,7 +142,16 @@
     </a>
     {% endif %}
     <a href="/blog" class="app-orb app-orb--sat app-orb--blog" title="Blog">
-        <span class="app-orb-glyph">&#x1F4DD;</span>
+        <span class="app-orb-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="5" cy="7" r="1" fill="currentColor" stroke="none" />
+                <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
+                <circle cx="5" cy="17" r="1" fill="currentColor" stroke="none" />
+                <line x1="9" y1="7" x2="20" y2="7" />
+                <line x1="9" y1="12" x2="20" y2="12" />
+                <line x1="9" y1="17" x2="16" y2="17" />
+            </svg>
+        </span>
         <span class="app-orb-name">Blog</span>
     </a>
 </nav>
