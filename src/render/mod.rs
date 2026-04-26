@@ -512,12 +512,28 @@ fn render_tag_page(
 
 /// Format byte size into human-readable string.
 fn format_size(bytes: u64) -> String {
-    if bytes < 1024 {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    if bytes < KB {
         format!("{} B", bytes)
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else if bytes < MB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else if bytes < GB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
     } else {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    }
+}
+
+/// Compact line-count rendering. < 1k → raw, < 1M → "k loc", else "M loc".
+fn format_lines(lines: u64) -> String {
+    if lines < 1_000 {
+        format!("{} loc", lines)
+    } else if lines < 1_000_000 {
+        format!("{:.1}k loc", lines as f64 / 1_000.0)
+    } else {
+        format!("{:.2}M loc", lines as f64 / 1_000_000.0)
     }
 }
 
@@ -773,6 +789,11 @@ fn render_files_page(
     }
     let total_connections = seen_edges.len();
 
+    let public_refs: Vec<&crate::parser::ParsedPage> = pages.iter().map(|t| t.0).collect();
+    let (total_bytes, total_lines) = crate::graph::stats::compute_global_stats(&public_refs);
+    let total_size_display = format_size(total_bytes);
+    let total_lines_display = format_lines(total_lines);
+
     let ctx = minijinja::context! {
         site => config.site,
         style => config.style,
@@ -787,6 +808,8 @@ fn render_files_page(
         files => files_data,
         total_files => total,
         total_connections => total_connections,
+        total_size => total_size_display,
+        total_lines => total_lines_display,
     };
 
     let tmpl = env.get_template("files.html")?;

@@ -388,17 +388,31 @@
       });
     }
 
+    function formatBytes(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+      return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+    }
+    function formatLines(lines) {
+      if (lines < 1000) return lines + ' loc';
+      if (lines < 1_000_000) return (lines / 1000).toFixed(1) + 'k loc';
+      return (lines / 1_000_000).toFixed(2) + 'M loc';
+    }
+
     function updateStats() {
       if (!stats) return;
+      const sizeStr = data.totalBytes != null ? ' &middot; ' + formatBytes(data.totalBytes) : '';
+      const locStr = data.totalLines != null ? ' &middot; ' + formatLines(data.totalLines) : '';
       if (visibleNodes) {
         const visEdges = edgeRefs.filter(e => {
           const sid = e.source.id || e.source;
           const tid = e.target.id || e.target;
           return visibleNodes.has(sid) || visibleNodes.has(tid);
         }).length;
-        stats.innerHTML = visibleNodes.size + ' / ' + data.nodes.length + ' files &middot; ' + visEdges + ' connections';
+        stats.innerHTML = visibleNodes.size + ' / ' + data.nodes.length + ' files &middot; ' + visEdges + ' connections' + sizeStr + locStr;
       } else {
-        stats.innerHTML = data.nodes.length + ' files &middot; ' + data.edges.length + ' connections';
+        stats.innerHTML = data.nodes.length + ' files &middot; ' + data.edges.length + ' connections' + sizeStr + locStr;
       }
     }
 
@@ -942,7 +956,7 @@
     }
 
     // Stats (appended early so filter UI can update it)
-    stats.innerHTML = data.nodes.length + ' files &middot; ' + data.edges.length + ' connections';
+    updateStats();
     container.appendChild(stats);
   }
 })();

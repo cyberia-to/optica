@@ -18,6 +18,13 @@ struct GraphData {
     domains: Vec<String>,
     /// Sorted distinct subgraph names across the graph.
     subgraphs: Vec<String>,
+    /// Aggregated size of every public file in bytes.
+    /// JS formats into KB/MB/GB for the stats pill.
+    #[serde(rename = "totalBytes")]
+    total_bytes: u64,
+    /// Aggregated source-line count (binary files count as 1).
+    #[serde(rename = "totalLines")]
+    total_lines: u64,
 }
 
 #[derive(Serialize)]
@@ -136,11 +143,15 @@ pub fn generate_graph_data(
         }
     }
 
+    let public_pages = store.public_pages(&config.content);
+    let (total_bytes, total_lines) = crate::graph::stats::compute_global_stats(&public_pages);
     let data = GraphData {
         nodes,
         edges,
         domains: domain_set.into_iter().collect(),
         subgraphs: subgraph_set.into_iter().collect(),
+        total_bytes,
+        total_lines,
     };
     let json = serde_json::to_string(&data)?;
 

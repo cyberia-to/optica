@@ -6,6 +6,7 @@
 mod links;
 mod namespaces;
 pub mod pagerank;
+pub mod stats;
 mod tags;
 pub mod trikernel;
 
