@@ -51,39 +51,58 @@ fn get_text_content<'a>(node: &'a AstNode<'a>) -> String {
 
 /// Render TOC entries as a flat list keyed by `data-depth`.
 ///
-/// The previous implementation tried to emit properly-nested
-/// `<ul><li>…</li></ul>` structures by opening/closing `<ul>` tags
-/// on heading-level transitions. That works only when the document
-/// strictly nests (h1 → h2 → h3, never decreasing past the root).
-/// Real pages mix levels in any order — e.g. animal-fat-oil starts
-/// with two h3s then drops to h2 — and the open/close counts don't
-/// balance. The result was orphan `<li>` elements outside any
-/// `<ul>`, which browsers fix up inconsistently (some li's got
-/// bullets, some didn't, and the indent pattern inverted).
+/// The page title (from frontmatter) is always prepended at
+/// depth=1 and links to `#top`. This guarantees the TOC has a
+/// stable root regardless of how the body markdown is structured —
+/// some pages start with h3 then drop to h2 (animal-fat-oil),
+/// others mix h1 and h2 in arbitrary order (cyb has h2 "from
+/// subgraph cyb" followed by h1 "features"). Without a synthetic
+/// root, the TOC's first item visually competes with the section
+/// list and the indent gets weird.
 ///
-/// Flat list + depth class sidesteps the whole problem: every
-/// entry is a sibling `<li>` in a single `<ul>`, depth comes from
-/// CSS `padding-left` keyed off `data-depth`. The DOM is always
-/// valid and the indent always matches the heading hierarchy.
-pub fn render_toc_html(entries: &[TocEntry]) -> String {
-    if entries.is_empty() {
+/// Body headings are placed at depth = (level - body_min) + 2,
+/// so they always sit at least one indent below the page title.
+///
+/// Flat list + depth class also sidesteps the nested-<ul>
+/// open/close counts that produced orphan <li> elements when the
+/// heading sequence didn't strictly nest.
+pub fn render_toc_html(entries: &[TocEntry], page_title: Option<&str>) -> String {
+    let has_title = page_title.is_some();
+    if entries.is_empty() && !has_title {
         return String::new();
     }
 
-    let min_level = entries.iter().map(|e| e.level).min().unwrap_or(1);
     let mut html = String::from(
         "<nav class=\"toc\" aria-label=\"Table of Contents\">\n<h3>Contents</h3>\n<ul>\n",
     );
 
-    for entry in entries {
-        let depth = entry.level.saturating_sub(min_level) + 1;
+    if let Some(title) = page_title {
         html.push_str(&format!(
-            "<li data-depth=\"{}\"><a href=\"#{}\">{}</a></li>\n",
-            depth, entry.id, entry.text
+            "<li data-depth=\"1\" class=\"toc-title\"><a href=\"#top\">{}</a></li>\n",
+            html_escape(title)
         ));
+    }
+
+    if !entries.is_empty() {
+        let body_min = entries.iter().map(|e| e.level).min().unwrap_or(1);
+        let offset: u32 = if has_title { 2 } else { 1 };
+        for entry in entries {
+            let depth = entry.level.saturating_sub(body_min) as u32 + offset;
+            html.push_str(&format!(
+                "<li data-depth=\"{}\"><a href=\"#{}\">{}</a></li>\n",
+                depth, entry.id, entry.text
+            ));
+        }
     }
 
     html.push_str("</ul>\n</nav>");
     html
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 

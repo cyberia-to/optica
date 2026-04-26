@@ -1344,6 +1344,21 @@ hr {
     opacity: 0.5;
 }
 
+/* Synthetic page-title row at the top of every TOC. Slightly
+   stronger weight than body entries so the eye reads it as the
+   root. No bullet — it stands on its own. */
+.toc li.toc-title {
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+}
+.toc li.toc-title::before {
+    content: none;
+}
+.toc li.toc-title a {
+    opacity: 1;
+    color: var(--color-primary);
+}
+
 .toc a {
     color: var(--color-text);
     opacity: 0.8;
