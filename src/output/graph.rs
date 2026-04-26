@@ -14,6 +14,10 @@ use std::path::Path;
 struct GraphData {
     nodes: Vec<GraphNode>,
     edges: Vec<GraphEdge>,
+    /// Sorted distinct crystal-domain values across the graph.
+    domains: Vec<String>,
+    /// Sorted distinct subgraph names across the graph.
+    subgraphs: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -22,6 +26,10 @@ struct GraphNode {
     title: String,
     url: String,
     tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subgraph: Option<String>,
     #[serde(rename = "linkCount")]
     link_count: usize,
     #[serde(rename = "pageRank")]
@@ -65,11 +73,20 @@ pub fn generate_graph_data(
 
             let pr = store.pagerank.get(&page.id).copied().unwrap_or(0.0);
             let fc = store.focus.get(&page.id).copied().unwrap_or(0.0);
+            let domain = page
+                .meta
+                .properties
+                .get("crystal-domain")
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .and_then(|raw| canonical_domain(&raw).map(|s| s.to_string()));
             GraphNode {
                 id: page.id.clone(),
                 title: page.meta.title.clone(),
                 url: format!("/{}", page.id),
                 tags: page.meta.tags.clone(),
+                domain,
+                subgraph: page.subgraph.clone(),
                 link_count: backlink_count + forward_count,
                 page_rank: (pr * 100000.0).round() / 100000.0,
                 focus: (fc * 100000.0).round() / 100000.0,
@@ -107,7 +124,24 @@ pub fn generate_graph_data(
     // Pre-compute force-directed layout
     compute_layout(&mut nodes, &edges);
 
-    let data = GraphData { nodes, edges };
+    // Distinct domains and subgraphs for filter UI on the client.
+    let mut domain_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut subgraph_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for n in &nodes {
+        if let Some(ref d) = n.domain {
+            domain_set.insert(d.clone());
+        }
+        if let Some(ref s) = n.subgraph {
+            subgraph_set.insert(s.clone());
+        }
+    }
+
+    let data = GraphData {
+        nodes,
+        edges,
+        domains: domain_set.into_iter().collect(),
+        subgraphs: subgraph_set.into_iter().collect(),
+    };
     let json = serde_json::to_string(&data)?;
 
     // Write JSON for minimap/API use
@@ -351,16 +385,21 @@ fn compute_layout(nodes: &mut [GraphNode], edges: &[GraphEdge]) {
     let alpha_decay = 0.023_f64;
     let theta_sq: f64 = 0.81; // 0.9²
 
-    // Deterministic pseudo-random initialization (no visible patterns)
+    // Fibonacci-spiral disk initialization. Each sample sits at a
+    // golden-ratio angle with radius r = sqrt(i/n)·R so point
+    // density is uniform per unit area. Previous LCG hash init
+    // produced correlated x,y bits that pinned the final layout into
+    // a diagonal teardrop when gravity was strong enough to hold it.
     let mut x = vec![0.0f64; n];
     let mut y = vec![0.0f64; n];
     let spread = (n as f64).sqrt() * 4.0;
+    let golden_angle = std::f64::consts::PI * (3.0 - 5.0_f64.sqrt());
     for i in 0..n {
-        let hash = (i as u64).wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        let hx = ((hash >> 0) & 0xFFFF) as f64 / 65536.0 - 0.5;
-        let hy = ((hash >> 16) & 0xFFFF) as f64 / 65536.0 - 0.5;
-        x[i] = hx * spread;
-        y[i] = hy * spread;
+        let t = (i as f64 + 0.5) / n as f64;
+        let r = t.sqrt() * spread;
+        let a = (i as f64) * golden_angle;
+        x[i] = r * a.cos();
+        y[i] = r * a.sin();
     }
 
     let mut vx = vec![0.0f64; n];
@@ -435,11 +474,20 @@ fn compute_layout(nodes: &mut [GraphNode], edges: &[GraphEdge]) {
             y[i] -= cy;
         }
 
-        // Gravity — pull high-PageRank nodes toward center so hubs cluster together
-        let gravity_strength = 0.03_f64;
+        // Gravity — pull every node toward origin so disconnected
+        // components (subgraphs that don't cross-link into the main
+        // graph) stay in a bounded world. Previously the pull scaled
+        // with PageRank, which zeroed for peripheral / orphan nodes
+        // and let them drift to >10^7 units over 300 iterations. The
+        // graph page then rendered as a single dot because fit
+        // normalization absorbed the span. Apply uniform gravity with
+        // a PageRank-weighted hub term layered on top so hubs still
+        // cluster tighter than periphery without anyone escaping.
+        let base_gravity = 0.25_f64;
+        let hub_gravity = 0.15_f64;
         for i in 0..n {
             let pr_factor = nodes[i].page_rank / max_pr;
-            let pull = gravity_strength * pr_factor * alpha;
+            let pull = (base_gravity + hub_gravity * pr_factor) * alpha;
             vx[i] -= x[i] * pull;
             vy[i] -= y[i] * pull;
         }
@@ -450,6 +498,25 @@ fn compute_layout(nodes: &mut [GraphNode], edges: &[GraphEdge]) {
             vy[i] *= 1.0 - velocity_decay;
             x[i] += vx[i];
             y[i] += vy[i];
+        }
+
+        // Safety clamp: a circular world boundary at 6× initial
+        // spread. If a node escapes — usually a peripheral cluster
+        // pushed by Barnes-Hut repulsion that gravity hasn't yet
+        // caught — snap it to the wall and damp its velocity. Without
+        // this any subgraph that the force balance fails to anchor
+        // can drift to 10^6+ units and break final framing.
+        let max_radius = spread * 6.0;
+        let max_r_sq = max_radius * max_radius;
+        for i in 0..n {
+            let r_sq = x[i] * x[i] + y[i] * y[i];
+            if r_sq > max_r_sq {
+                let scale = max_radius / r_sq.sqrt();
+                x[i] *= scale;
+                y[i] *= scale;
+                vx[i] *= 0.5;
+                vy[i] *= 0.5;
+            }
         }
     }
 
@@ -631,4 +698,36 @@ pub fn get_minimap_data(
     }
 
     MinimapData { nodes, edges }
+}
+
+/// Map a raw `crystal-domain` frontmatter value to one of the 21
+/// canonical domains documented in `cyber/root/cyber/crystal.md`
+/// (organized in 7 triads: FORM, MASS, SPACE, LIFE, WORD, WORK, PLAY).
+/// Returns None for values that don't map — keeps the filter UI clean
+/// instead of leaking historical synonyms (e.g. "biology" vs "bio").
+fn canonical_domain(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_lowercase().as_str() {
+        "math" | "mathematics" => Some("math"),
+        "info" | "information" => Some("info"),
+        "comp" | "computer science" | "cs" => Some("comp"),
+        "quantum" | "physics" => Some("quantum"),
+        "chemo" | "chemistry" => Some("chemo"),
+        "energo" | "energy" => Some("energo"),
+        "cosmo" | "cosmos" | "astronomy" => Some("cosmo"),
+        "geo" | "geography" => Some("geo"),
+        "eco" | "ecology" | "agriculture" => Some("eco"),
+        "bio" | "biology" => Some("bio"),
+        "neuro" | "neuroscience" => Some("neuro"),
+        "sense" => Some("sense"),
+        "lang" | "language" | "linguistics" => Some("lang"),
+        "spiri" | "spirit" => Some("spiri"),
+        "meta" | "history" => Some("meta"),
+        "ai" => Some("ai"),
+        "tech" | "materials" | "engineering" => Some("tech"),
+        "cyber" | "cybernetics" | "cybics" => Some("cyber"),
+        "socio" | "society" | "governance" | "economics" => Some("socio"),
+        "crypto" => Some("crypto"),
+        "game" | "play" => Some("game"),
+        _ => None,
+    }
 }
