@@ -133,7 +133,13 @@ content %}
             var siteHeader = document.querySelector('.site-header');
             var titleBar = document.querySelector('.page-title-bar');
             var tabsBar = document.querySelector('.page-tabs');
-            function siteHeaderHeight() { return siteHeader ? siteHeader.offsetHeight : 0; }
+            // Site-header was sticky-top; stacked-sticky offsets used its
+            // height to anchor title-bar and tabs-bar below it. Now the
+            // header lives at the bottom — title-bar should pin to top: 0
+            // directly. Returning 0 keeps the var-driven stacking math
+            // valid without touching every selector that reads
+            // --site-header-h or --sticky-h.
+            function siteHeaderHeight() { return 0; }
             function titleBarHeight() { return titleBar ? titleBar.offsetHeight : 0; }
             function tabsBarHeight() { return tabsBar ? tabsBar.offsetHeight : 0; }
             function syncOffsets() {
