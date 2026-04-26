@@ -49,35 +49,38 @@ fn get_text_content<'a>(node: &'a AstNode<'a>) -> String {
     text
 }
 
-/// Render TOC entries as nested HTML list.
+/// Render TOC entries as a flat list keyed by `data-depth`.
+///
+/// The previous implementation tried to emit properly-nested
+/// `<ul><li>…</li></ul>` structures by opening/closing `<ul>` tags
+/// on heading-level transitions. That works only when the document
+/// strictly nests (h1 → h2 → h3, never decreasing past the root).
+/// Real pages mix levels in any order — e.g. animal-fat-oil starts
+/// with two h3s then drops to h2 — and the open/close counts don't
+/// balance. The result was orphan `<li>` elements outside any
+/// `<ul>`, which browsers fix up inconsistently (some li's got
+/// bullets, some didn't, and the indent pattern inverted).
+///
+/// Flat list + depth class sidesteps the whole problem: every
+/// entry is a sibling `<li>` in a single `<ul>`, depth comes from
+/// CSS `padding-left` keyed off `data-depth`. The DOM is always
+/// valid and the indent always matches the heading hierarchy.
 pub fn render_toc_html(entries: &[TocEntry]) -> String {
     if entries.is_empty() {
         return String::new();
     }
 
-    let mut html = String::from("<nav class=\"toc\" aria-label=\"Table of Contents\">\n<h3>Contents</h3>\n<ul>\n");
-    let mut prev_level = entries[0].level;
+    let min_level = entries.iter().map(|e| e.level).min().unwrap_or(1);
+    let mut html = String::from(
+        "<nav class=\"toc\" aria-label=\"Table of Contents\">\n<h3>Contents</h3>\n<ul>\n",
+    );
 
     for entry in entries {
-        if entry.level > prev_level {
-            for _ in 0..(entry.level - prev_level) {
-                html.push_str("<ul>\n");
-            }
-        } else if entry.level < prev_level {
-            for _ in 0..(prev_level - entry.level) {
-                html.push_str("</ul>\n");
-            }
-        }
+        let depth = entry.level.saturating_sub(min_level) + 1;
         html.push_str(&format!(
-            "<li><a href=\"#{}\">{}</a></li>\n",
-            entry.id, entry.text
+            "<li data-depth=\"{}\"><a href=\"#{}\">{}</a></li>\n",
+            depth, entry.id, entry.text
         ));
-        prev_level = entry.level;
-    }
-
-    // Close remaining nested lists
-    for _ in entries[0].level..prev_level {
-        html.push_str("</ul>\n");
     }
 
     html.push_str("</ul>\n</nav>");

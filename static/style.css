@@ -1312,16 +1312,36 @@ hr {
 
 .toc ul {
     margin: 0;
-    padding-left: 1.2rem;
+    padding-left: 0;
     list-style: none;
 }
 
-.toc ul ul {
-    padding-left: 1rem;
-}
-
+/* Depth-driven indent. Flat <li> + data-depth keeps the DOM valid
+   on pages whose headings don't strictly nest (mixing h2/h3 in any
+   order); padding-left is the visual hierarchy. 1.4rem per step is
+   wide enough to read at a glance, narrow enough that 5–6 levels
+   still fit. */
 .toc li {
     margin: 0.2rem 0;
+    padding-left: calc((var(--toc-d, 1) - 1) * 1.4rem);
+    position: relative;
+}
+
+.toc li[data-depth="1"] { --toc-d: 1; }
+.toc li[data-depth="2"] { --toc-d: 2; }
+.toc li[data-depth="3"] { --toc-d: 3; }
+.toc li[data-depth="4"] { --toc-d: 4; }
+.toc li[data-depth="5"] { --toc-d: 5; }
+.toc li[data-depth="6"] { --toc-d: 6; }
+
+/* Subtle marker dot before each entry. Same shape at every depth —
+   the indent carries the hierarchy, the dot just anchors the eye. */
+.toc li::before {
+    content: "·";
+    position: absolute;
+    left: calc((var(--toc-d, 1) - 1) * 1.4rem - 0.7rem);
+    color: var(--color-primary);
+    opacity: 0.5;
 }
 
 .toc a {
