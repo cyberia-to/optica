@@ -724,21 +724,33 @@ hr {
     z-index: 20;
     display: flex;
     flex-direction: column;
-    padding: 1rem 0;
+    padding: 0.6rem 0 1rem;
     overflow-y: auto;
 }
 
+/* Tight header — site title sits right above the menu so the eye
+   reads "app name + items" as one block, not as two stacked
+   sections separated by whitespace. */
 .sidebar-header {
-    padding: 0.5rem 1rem 1rem;
+    padding: 0.25rem 1rem 0.15rem;
     border-bottom: none;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0;
 }
 
 .site-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
     font-weight: 700;
-    font-size: 1.1rem;
+    font-size: 1.15rem;
     color: var(--color-text);
     white-space: nowrap;
+}
+
+.site-icon {
+    font-size: 1.25rem;
+    line-height: 1;
+    flex-shrink: 0;
 }
 
 .site-title:hover {
@@ -747,7 +759,7 @@ hr {
 
 .sidebar-nav {
     flex: 1;
-    padding: 0.5rem 0;
+    padding: 0.15rem 0 0.5rem;
 }
 
 .sidebar-menu {
