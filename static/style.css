@@ -590,6 +590,61 @@ hr {
 }
 
 /* ============================================================
+   TOP NAV — primary site functions, hint at what this site is for
+   ============================================================ */
+
+.top-nav {
+    position: fixed;
+    top: 0.65rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 25;
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.25rem 0.4rem;
+    background: color-mix(in srgb, var(--color-bg) 80%, transparent);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+.top-nav-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.85rem;
+    border-radius: 999px;
+    color: var(--color-text);
+    opacity: 0.7;
+    text-decoration: none;
+    font-size: 0.82rem;
+    letter-spacing: 0.02em;
+    transition: opacity 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.top-nav-item:hover {
+    opacity: 1;
+    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+
+.top-nav-item.active {
+    opacity: 1;
+    color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.top-nav-icon {
+    font-size: 0.95em;
+    line-height: 1;
+}
+
+@media (max-width: 640px) {
+    .top-nav-label { display: none; }
+    .top-nav-item { padding: 0.3rem 0.6rem; }
+}
+
+/* ============================================================
    SIDEBAR NAVIGATION
    ============================================================ */
 
@@ -1630,7 +1685,7 @@ body:has(.fullscreen-viz) .main-content {
    don't overlap the sidebar menu on the left. */
 .graph-filter {
     position: fixed;
-    top: 1rem;
+    top: 3.5rem;
     left: 50%;
     transform: translateX(-50%);
     width: 62%;
