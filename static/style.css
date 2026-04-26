@@ -610,8 +610,8 @@ hr {
     bottom: 1.25rem;
     left: 1.25rem;
     z-index: 25;
-    width: 8rem;
-    height: 7rem;
+    width: 16rem;
+    height: 14rem;
     pointer-events: none;
 }
 
@@ -656,23 +656,33 @@ hr {
 }
 
 .app-orb--main {
-    width: 3.6rem;
-    height: 3.6rem;
+    width: 10.8rem;
+    height: 10.8rem;
 }
-.app-orb--main .app-orb-glyph { font-size: 1.55rem; }
+.app-orb--main .app-orb-glyph {
+    width: 70%;
+    height: 70%;
+    color: var(--color-primary);
+    display: block;
+}
+.app-orb--main .app-orb-graph-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 45%, transparent));
+}
 
 .app-orb--sat {
-    width: 2.2rem;
-    height: 2.2rem;
+    width: 2.4rem;
+    height: 2.4rem;
 }
-.app-orb--sat .app-orb-glyph { font-size: 1rem; }
+.app-orb--sat .app-orb-glyph { font-size: 1.05rem; }
 
-/* Constellation positions — graph anchored bottom-left, files and
-   blog scattered above and to the right so the cluster looks
-   slightly organic rather than a row of buttons. */
+/* Constellation positions — graph anchored bottom-left as the main
+   orb, Files and Blog drift up and to the right as small satellites. */
 .app-orb--graph { bottom: 0; left: 0; }
-.app-orb--files { bottom: 4rem; left: 0.7rem; }
-.app-orb--blog  { bottom: 2.4rem; left: 4.1rem; }
+.app-orb--files { bottom: 11rem; left: 1.5rem; }
+.app-orb--blog  { bottom: 8.5rem; left: 11.5rem; }
 
 .app-orb-glyph { line-height: 1; }
 
