@@ -80,17 +80,38 @@
     // Transform state (must be before finishSetup is called)
     let transform = d3.zoomIdentity;
     let hoveredNode = null;
+    let hoveredCentroid = null; // active super-node under cursor in tab preview
+    let centroidMembers = null; // Set<id> of pages belonging to hoveredCentroid
     let edgeRefs = [];
+    let zoomBehavior = null;  // assigned in finishSetup, used by fitToVisible
+    // Cluster centroids per dimension. Computed after layout
+    // normalization; used to render labeled super-nodes when a tab is
+    // previewed (e.g. clicking "Subgraphs" shows one circle per repo
+    // at the mean position of its pages).
+    const groups = { domains: {}, subgraphs: {}, tags: {} };
 
     // Stats element (created early so filter can update it)
     const stats = document.createElement('div');
     stats.className = 'graph-stats';
 
-    // Tag filter state
-    let activeTags = new Set();
+    // Three filter dimensions, combined with AND across, OR within.
+    // - Domains  : crystal-domain frontmatter values (semantic)
+    // - Subgraphs: which repo a page came from (structural)
+    // - Tags     : long-tail folksonomy (top-N by frequency)
+    // Only one dimension's pills are visible at a time; selections
+    // in the others persist and keep affecting the filter.
+    const activeFilters = {
+      domains: new Set(),
+      subgraphs: new Set(),
+      tags: new Set(),
+    };
+    let activeDim = 'domains';
+    let tabHighlight = false; // true after a tab click with no pills selected:
+                              // dims nodes that have NO value in active dim
     let visibleNodes = null; // null = show all, Set = filtered
 
-    // Extract tags sorted by frequency, min 3 occurrences, max 20 pills
+    const allDomains = (data.domains || []).slice();
+    const allSubgraphs = (data.subgraphs || []).slice();
     const tagCounts = {};
     data.nodes.forEach(n => {
       (n.tags || []).forEach(t => { tagCounts[t] = (tagCounts[t] || 0) + 1; });
@@ -98,27 +119,41 @@
     const topTags = Object.entries(tagCounts)
       .filter(([, count]) => count >= 3)
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 20)
+      .slice(0, 30)
       .map(([tag]) => tag);
 
-    // Restore filter from URL params
+    const dimensionMeta = {
+      domains:   { label: 'Domains',   values: allDomains,   validator: (v) => allDomains.includes(v) },
+      subgraphs: { label: 'Subgraphs', values: allSubgraphs, validator: (v) => allSubgraphs.includes(v) },
+      tags:      { label: 'Tags',      values: topTags,      validator: (v) => tagCounts[v] != null },
+    };
+
+    // URL params: dim=domains|subgraphs|tags, domains=a,b, sub=c, tags=d
     const urlParams = new URLSearchParams(window.location.search);
-    const urlTags = urlParams.get('tags');
-    if (urlTags) {
-      urlTags.split(',').forEach(t => {
-        const trimmed = t.trim();
-        if (trimmed && tagCounts[trimmed]) activeTags.add(trimmed);
+    const urlDim = urlParams.get('dim');
+    if (urlDim && dimensionMeta[urlDim]) activeDim = urlDim;
+    ['domains','subgraphs','tags'].forEach(d => {
+      const key = d === 'subgraphs' ? 'sub' : d;
+      const raw = urlParams.get(key);
+      if (!raw) return;
+      raw.split(',').forEach(v => {
+        const t = v.trim();
+        if (t && dimensionMeta[d].validator(t)) activeFilters[d].add(t);
       });
-      updateVisibleNodes();
-    }
+    });
+    if (Object.values(activeFilters).some(s => s.size > 0)) updateVisibleNodes();
 
     function syncFilterToURL() {
       const url = new URL(window.location);
-      if (activeTags.size > 0) {
-        url.searchParams.set('tags', Array.from(activeTags).join(','));
-      } else {
-        url.searchParams.delete('tags');
-      }
+      if (activeDim !== 'domains') url.searchParams.set('dim', activeDim);
+      else url.searchParams.delete('dim');
+      [['domains','domains'],['subgraphs','sub'],['tags','tags']].forEach(([d, key]) => {
+        if (activeFilters[d].size > 0) {
+          url.searchParams.set(key, Array.from(activeFilters[d]).join(','));
+        } else {
+          url.searchParams.delete(key);
+        }
+      });
       history.replaceState(null, '', url);
     }
 
@@ -139,70 +174,217 @@
       return null;
     }
 
-    function updateVisibleNodes() {
-      if (activeTags.size === 0) {
-        visibleNodes = null;
-      } else {
-        visibleNodes = new Set();
-        data.nodes.forEach(n => {
-          if ((n.tags || []).some(t => activeTags.has(t))) {
-            visibleNodes.add(n.id);
-          }
-        });
-      }
+    function nodeHasValueInDim(n, dim) {
+      if (dim === 'domains')   return n.domain != null && n.domain !== '';
+      if (dim === 'subgraphs') return n.subgraph != null && n.subgraph !== '';
+      if (dim === 'tags')      return (n.tags || []).length > 0;
+      return false;
     }
 
+    function updateVisibleNodes() {
+      const anyActive = Object.values(activeFilters).some(s => s.size > 0);
+      if (!anyActive) { visibleNodes = null; return; }
+      visibleNodes = new Set();
+      data.nodes.forEach(n => {
+        if (activeFilters.domains.size > 0 && !activeFilters.domains.has(n.domain)) return;
+        if (activeFilters.subgraphs.size > 0 && !activeFilters.subgraphs.has(n.subgraph)) return;
+        if (activeFilters.tags.size > 0) {
+          const tags = n.tags || [];
+          let hit = false;
+          for (const t of tags) { if (activeFilters.tags.has(t)) { hit = true; break; } }
+          if (!hit) return;
+        }
+        visibleNodes.add(n.id);
+      });
+    }
+
+    // Animate the canvas viewport to fit the currently filtered subset
+    // (or the whole graph when no filter is active). Without this the
+    // filter "happens" but isn't visually obvious — matching nodes can
+    // be far apart under the existing zoom level.
+    function fitToVisible() {
+      if (!zoomBehavior) return;
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, count = 0;
+      // In tab-preview mode fit to the centroids of the active dim;
+      // page nodes are dimmed so they shouldn't drive the framing.
+      const points = (tabHighlight && groups[activeDim])
+        ? Object.values(groups[activeDim])
+        : data.nodes.filter(n => !visibleNodes || visibleNodes.has(n.id));
+      for (const p of points) {
+        if (typeof p.x !== 'number' || typeof p.y !== 'number') continue;
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+        count++;
+      }
+      if (count === 0 || !isFinite(minX)) return;
+      const pad = 80;
+      const bw = Math.max(1, maxX - minX);
+      const bh = Math.max(1, maxY - minY);
+      const k = Math.min((w - pad * 2) / bw, (h - pad * 2) / bh, 6);
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      const tx = w / 2 - cx * k;
+      const ty = h / 2 - cy * k;
+      const next = d3.zoomIdentity.translate(tx, ty).scale(k);
+      d3.select(canvas)
+        .transition()
+        .duration(450)
+        .call(zoomBehavior.transform, next);
+    }
+
+    let pillsRowEl = null;
+    let tabsEl = null;
+
     function buildFilterUI() {
-      if (topTags.length === 0) return;
-      const bar = document.createElement('div');
-      bar.className = 'graph-filter';
+      // Container with two rows: tabs (dimension switcher) + pills.
+      const wrap = document.createElement('div');
+      wrap.className = 'graph-filter';
+
+      tabsEl = document.createElement('div');
+      tabsEl.className = 'graph-filter-tabs';
+      ['domains', 'subgraphs', 'tags'].forEach(d => {
+        const meta = dimensionMeta[d];
+        if (!meta.values.length) return;
+        const btn = document.createElement('button');
+        btn.className = 'graph-filter-tab';
+        btn.dataset.dim = d;
+        btn.addEventListener('click', () => {
+          // Same tab clicked again → toggle preview off so the user
+          // can interact with page nodes without first hunting for an
+          // exit pill. Switching to a different tab → enter preview
+          // unless that dim already has explicit pills selected.
+          if (activeDim === d) {
+            tabHighlight = !tabHighlight;
+          } else {
+            activeDim = d;
+            tabHighlight = activeFilters[d].size === 0;
+          }
+          renderPillsRow();
+          updateTabStates();
+          syncFilterToURL();
+          updateVisibleNodes();
+          updateStats();
+          draw();
+          fitToVisible();
+        });
+        tabsEl.appendChild(btn);
+      });
+      wrap.appendChild(tabsEl);
+
+      pillsRowEl = document.createElement('div');
+      pillsRowEl.className = 'graph-filter-pills';
+      wrap.appendChild(pillsRowEl);
+
+      document.body.appendChild(wrap);
+
+      renderPillsRow();
+      updateTabStates();
+    }
+
+    function renderPillsRow() {
+      if (!pillsRowEl) return;
+      pillsRowEl.innerHTML = '';
+      const meta = dimensionMeta[activeDim];
+      if (!meta || !meta.values.length) return;
+      const set = activeFilters[activeDim];
 
       const allPill = document.createElement('button');
-      allPill.className = 'graph-filter-pill active';
+      allPill.className = 'graph-filter-pill all-pill' + (set.size === 0 ? ' active' : '');
       allPill.textContent = 'all';
       allPill.addEventListener('click', () => {
-        activeTags.clear();
-        updateVisibleNodes();
-        updatePillStates();
-        updateStats();
-        syncFilterToURL();
-        draw();
+        set.clear();
+        // Clearing pills also clears any tab-preview highlight in
+        // this dim, so the user gets back to a clean unrestricted view.
+        tabHighlight = false;
+        applyFilterChange();
       });
-      bar.appendChild(allPill);
+      pillsRowEl.appendChild(allPill);
 
-      topTags.forEach(tag => {
+      meta.values.forEach(v => {
         const pill = document.createElement('button');
-        pill.className = 'graph-filter-pill';
-        pill.textContent = tag;
-        pill.dataset.tag = tag;
+        pill.className = 'graph-filter-pill' + (set.has(v) ? ' active' : '');
+        pill.textContent = v;
+        pill.dataset.value = v;
         pill.addEventListener('click', () => {
-          if (activeTags.has(tag)) {
-            activeTags.delete(tag);
-          } else {
-            activeTags.add(tag);
+          if (set.has(v)) set.delete(v); else set.add(v);
+          // Selecting concrete pills replaces the tab-preview state —
+          // user has expressed a specific filter intent.
+          tabHighlight = false;
+          applyFilterChange();
+        });
+        // Pill hover = scrubbing preview. Mirrors the centroid-hover
+        // path: build the member set for this value in the active dim
+        // and let the draw loop lift those pages out of the dim sea.
+        // Without this the tab-preview view felt static — you saw
+        // centroids but had to click a pill to find out what was in one.
+        pill.addEventListener('mouseenter', () => {
+          if (!tabHighlight) return;
+          const members = new Set();
+          for (const n of data.nodes) {
+            let match = false;
+            if (activeDim === 'domains')   match = n.domain === v;
+            else if (activeDim === 'subgraphs') match = n.subgraph === v;
+            else if (activeDim === 'tags')      match = (n.tags || []).includes(v);
+            if (match) members.add(n.id);
           }
-          updateVisibleNodes();
-          updatePillStates();
-          updateStats();
-          syncFilterToURL();
+          centroidMembers = members.size ? members : null;
+          hoveredCentroid = v;
           draw();
         });
-        bar.appendChild(pill);
+        pill.addEventListener('mouseleave', () => {
+          if (!tabHighlight) return;
+          if (hoveredCentroid === v) {
+            centroidMembers = null;
+            hoveredCentroid = null;
+            draw();
+          }
+        });
+        pillsRowEl.appendChild(pill);
       });
+    }
 
-      document.body.appendChild(bar);
+    function applyFilterChange() {
+      updateVisibleNodes();
+      updatePillStates();
+      updateTabStates();
+      updateStats();
+      syncFilterToURL();
+      draw();
+      fitToVisible();
     }
 
     function updatePillStates() {
-      const pills = document.querySelectorAll('.graph-filter-pill');
-      pills.forEach(pill => {
-        const tag = pill.dataset.tag;
-        if (!tag) {
-          // "all" pill
-          pill.classList.toggle('active', activeTags.size === 0);
+      if (!pillsRowEl) return;
+      const set = activeFilters[activeDim];
+      pillsRowEl.querySelectorAll('.graph-filter-pill').forEach(pill => {
+        const v = pill.dataset.value;
+        if (!v) {
+          pill.classList.toggle('active', set.size === 0);
         } else {
-          pill.classList.toggle('active', activeTags.has(tag));
+          pill.classList.toggle('active', set.has(v));
         }
+      });
+    }
+
+    function updateTabStates() {
+      if (!tabsEl) return;
+      tabsEl.querySelectorAll('.graph-filter-tab').forEach(btn => {
+        const d = btn.dataset.dim;
+        const count = activeFilters[d].size;
+        // "active" = this dim is actually doing something (preview
+        // running, or pills selected). Just having activeDim point at
+        // this tab — which is true on first paint — shouldn't make it
+        // look engaged; that misleads the reader into thinking a
+        // filter is on.
+        const engaged = (d === activeDim && tabHighlight) || count > 0;
+        btn.classList.toggle('active', engaged);
+        btn.classList.toggle('current', d === activeDim);
+        btn.classList.toggle('has-selection', count > 0);
+        btn.textContent = count > 0
+          ? dimensionMeta[d].label + ' · ' + count
+          : dimensionMeta[d].label;
       });
     }
 
@@ -224,17 +406,29 @@
     const hasLayout = data.nodes.length > 0 && data.nodes.some(n => n.x !== 0 || n.y !== 0);
 
     if (hasLayout) {
-      // Use percentile bounds (ignore outliers for better framing)
-      const xs = data.nodes.map(d => d.x).sort((a, b) => a - b);
-      const ys = data.nodes.map(d => d.y).sort((a, b) => a - b);
-      const p = Math.max(1, Math.floor(data.nodes.length * 0.02));
-      const minX = xs[p], maxX = xs[xs.length - 1 - p];
-      const minY = ys[p], maxY = ys[ys.length - 1 - p];
-      const graphW = maxX - minX || 1;
-      const graphH = maxY - minY || 1;
+      // Server-side force layout can produce multi-modal clusters where
+      // subgraphs settle far from the main graph. Simple min-max would
+      // then compress every dense region to a single dot. Use MAD-based
+      // bounds: median ± k·MAD captures the dominant cluster tightly
+      // while outlying clusters stay in-world but off-screen until the
+      // reader pans or zooms out.
+      function robustBounds(values) {
+        const sorted = values.slice().sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        const devs = sorted.map(v => Math.abs(v - median)).sort((a, b) => a - b);
+        const mad = devs[Math.floor(devs.length / 2)] || 1;
+        const spread = Math.max(1, mad * 5);
+        return { min: median - spread, max: median + spread, center: median };
+      }
+      const xs = data.nodes.map(d => d.x);
+      const ys = data.nodes.map(d => d.y);
+      const xb = robustBounds(xs);
+      const yb = robustBounds(ys);
+      const graphW = xb.max - xb.min || 1;
+      const graphH = yb.max - yb.min || 1;
       const scale = Math.min(w / graphW, h / graphH) * 0.85;
-      const cx = (minX + maxX) / 2;
-      const cy = (minY + maxY) / 2;
+      const cx = xb.center;
+      const cy = yb.center;
       data.nodes.forEach(d => {
         d.x = w / 2 + (d.x - cx) * scale;
         d.y = h / 2 + (d.y - cy) * scale;
@@ -302,26 +496,51 @@
         target: typeof e.target === 'object' ? e.target : nodeById[e.target]
       }));
 
+      // Compute centroids per dim value (uses post-normalization
+      // node positions). Tags are restricted to the same top-N
+      // tagCounts list shown in pills.
+      function bumpGroup(map, key, n) {
+        if (!map[key]) map[key] = { sumX: 0, sumY: 0, count: 0, value: key };
+        map[key].sumX += n.x;
+        map[key].sumY += n.y;
+        map[key].count += 1;
+      }
+      for (const n of data.nodes) {
+        if (typeof n.x !== 'number' || typeof n.y !== 'number') continue;
+        if (n.domain) bumpGroup(groups.domains, n.domain, n);
+        if (n.subgraph) bumpGroup(groups.subgraphs, n.subgraph, n);
+        for (const t of (n.tags || [])) {
+          if (tagCounts[t] >= 3) bumpGroup(groups.tags, t, n);
+        }
+      }
+      for (const dim of ['domains', 'subgraphs', 'tags']) {
+        for (const k in groups[dim]) {
+          const g = groups[dim][k];
+          g.x = g.sumX / g.count;
+          g.y = g.sumY / g.count;
+        }
+      }
+
       buildFilterUI();
       updatePillStates();
       updateStats();
       draw();
 
       // Enable zoom + interactions
-      const zoom = d3.zoom()
+      zoomBehavior = d3.zoom()
         .scaleExtent([0.1, 20])
         .on('zoom', (event) => {
           transform = event.transform;
           saveViewport();
           draw();
         });
-      d3.select(canvas).call(zoom);
+      d3.select(canvas).call(zoomBehavior);
 
       // Restore saved viewport
       const saved = loadViewport();
       if (saved) {
         transform = d3.zoomIdentity.translate(saved.x, saved.y).scale(saved.k);
-        d3.select(canvas).call(zoom.transform, transform);
+        d3.select(canvas).call(zoomBehavior.transform, transform);
       }
 
       setupInteractions();
@@ -339,8 +558,10 @@
       // Determine if a node is visible (passes tag filter)
       const isVisible = visibleNodes ? (id) => visibleNodes.has(id) : () => true;
 
-      // Draw edges — when hovering, or when filter active (show connections between visible nodes)
-      if (hoveredNode || visibleNodes) {
+      // Draw edges — when hovering, when filter active, or when a
+      // centroid is hovered in tab preview (show connections between
+      // its members).
+      if (hoveredNode || visibleNodes || centroidMembers) {
         ctx.strokeStyle = colorPrimary;
         ctx.lineWidth = 0.8 / k;
         ctx.beginPath();
@@ -350,6 +571,8 @@
           let show = false;
           if (hoveredNode && (sid === hoveredNode.id || tid === hoveredNode.id)) {
             show = true;
+          } else if (centroidMembers && centroidMembers.has(sid) && centroidMembers.has(tid)) {
+            show = true;
           } else if (visibleNodes && isVisible(sid) && isVisible(tid)) {
             show = true;
           }
@@ -358,7 +581,7 @@
             ctx.lineTo(e.target.x, e.target.y);
           }
         }
-        ctx.globalAlpha = visibleNodes ? 0.15 : 0.3;
+        ctx.globalAlpha = centroidMembers ? 0.4 : (visibleNodes ? 0.15 : 0.3);
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
@@ -372,6 +595,18 @@
         // Tag filter fading
         if (visibleNodes && !nodeVisible) {
           alpha = 0.02;
+        }
+
+        // Tab preview: gray out the page-node sea so centroid
+        // super-nodes (drawn below) carry the eye. When a centroid
+        // is hovered, lift its members back to full visibility so
+        // the user sees which pages belong to that domain/subgraph/tag.
+        if (tabHighlight) {
+          if (centroidMembers && centroidMembers.has(n.id)) {
+            alpha = Math.max(alpha, 0.85);
+          } else {
+            alpha = Math.min(alpha, 0.05);
+          }
         }
 
         if (hoveredNode) {
@@ -424,6 +659,17 @@
               show = true;
               alpha = 0.15;
             }
+          } else if (centroidMembers) {
+            // Centroid hovered: label every member of that group.
+            if (centroidMembers.has(n.id)) {
+              show = true;
+              alpha = 0.85;
+            }
+          } else if (tabHighlight) {
+            // Tab preview, nothing hovered: page nodes are dimmed to
+            // 0.05, so their labels would be a wall of unrelated text.
+            // Let the centroid super-nodes carry the eye instead.
+            show = false;
           } else if (visibleNodes) {
             // Filter active: label all visible nodes
             if (nodeVisible) {
@@ -464,6 +710,46 @@
         }
       }
 
+      // Tab preview: render labeled super-nodes for each value in the
+      // active dimension, positioned at the centroid of its pages.
+      // Drawn after nodes/labels so they sit on top.
+      if (tabHighlight) {
+        const dimGroups = groups[activeDim] || {};
+        const groupArr = Object.values(dimGroups);
+        if (groupArr.length) {
+          const maxCount = groupArr.reduce((m, g) => Math.max(m, g.count), 1);
+          for (const g of groupArr) {
+            const r = (10 + Math.sqrt(g.count / maxCount) * 30) / k;
+            ctx.beginPath();
+            ctx.arc(g.x, g.y, r, 0, Math.PI * 2);
+            ctx.fillStyle = colorPrimary;
+            ctx.globalAlpha = 0.85;
+            ctx.fill();
+            ctx.shadowColor = colorPrimary;
+            ctx.shadowBlur = 14 / k;
+            ctx.lineWidth = 1.5 / k;
+            ctx.strokeStyle = colorPrimary;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+          }
+          // Labels above each super-node
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          for (const g of groupArr) {
+            const r = (10 + Math.sqrt(g.count / maxCount) * 30) / k;
+            const fontSize = Math.max(11, Math.min(18, 12 + r * 0.3 * k)) / k;
+            ctx.font = '600 ' + fontSize + 'px system-ui, sans-serif';
+            ctx.lineWidth = 4 / k;
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = colorBg;
+            ctx.globalAlpha = 1;
+            ctx.strokeText(g.value, g.x, g.y - r - 4 / k);
+            ctx.fillStyle = colorText;
+            ctx.fillText(g.value, g.x, g.y - r - 4 / k);
+          }
+        }
+      }
+
       ctx.globalAlpha = 1;
       ctx.restore();
     }
@@ -483,6 +769,33 @@
         const dist = dx * dx + dy * dy;
         if (dist < hitR * hitR && dist < closestDist) {
           closest = n;
+          closestDist = dist;
+        }
+      }
+      return closest;
+    }
+
+    // Centroid hit detection (used during tab preview). Matches the
+    // sizing logic in draw() so the visible super-node is the actual
+    // hit target.
+    function findCentroid(mx, my) {
+      if (!tabHighlight) return null;
+      const dimGroups = groups[activeDim] || {};
+      const groupArr = Object.values(dimGroups);
+      if (!groupArr.length) return null;
+      const maxCount = groupArr.reduce((m, g) => Math.max(m, g.count), 1);
+      const gx = (mx - transform.x) / transform.k;
+      const gy = (my - transform.y) / transform.k;
+      let closest = null;
+      let closestDist = Infinity;
+      for (const g of groupArr) {
+        const r = (10 + Math.sqrt(g.count / maxCount) * 30) / transform.k;
+        const hitR = Math.max(r, 6 / transform.k);
+        const dx = gx - g.x;
+        const dy = gy - g.y;
+        const dist = dx * dx + dy * dy;
+        if (dist < hitR * hitR && dist < closestDist) {
+          closest = g;
           closestDist = dist;
         }
       }
@@ -510,14 +823,44 @@
         const rect = canvas.getBoundingClientRect();
         const mx = event.clientX - rect.left;
         const my = event.clientY - rect.top;
-        const node = findNode(mx, my);
+
+        // Centroid takes precedence in tab-preview mode; otherwise
+        // fall through to standard page-node hover so the graph
+        // behaves the same way regardless of which dimension tab is
+        // active.
+        const centroid = tabHighlight ? findCentroid(mx, my) : null;
+        const node = centroid ? null : findNode(mx, my);
+
+        // Update hoveredCentroid + its member set (used by draw to
+        // light up just this group's pages and their edges).
+        if (centroid !== hoveredCentroid) {
+          hoveredCentroid = centroid;
+          centroidMembers = null;
+          if (centroid) {
+            centroidMembers = new Set();
+            for (const n of data.nodes) {
+              let match = false;
+              if (activeDim === 'domains')   match = n.domain === centroid.value;
+              else if (activeDim === 'subgraphs') match = n.subgraph === centroid.value;
+              else if (activeDim === 'tags')      match = (n.tags || []).indexOf(centroid.value) !== -1;
+              if (match) centroidMembers.add(n.id);
+            }
+          }
+          draw();
+        }
 
         if (node !== hoveredNode) {
           hoveredNode = node;
           draw();
         }
 
-        if (node) {
+        if (centroid) {
+          canvas.style.cursor = 'pointer';
+          tooltip.style.display = 'block';
+          tooltip.innerHTML = '<strong style="font-size:15px">' + centroid.value + '</strong><br><span style="font-size:12px;opacity:0.6">' + centroid.count + ' pages</span>';
+          tooltip.style.left = (event.clientX - rect.left + 15) + 'px';
+          tooltip.style.top = (event.clientY - rect.top - 10) + 'px';
+        } else if (node) {
           canvas.style.cursor = 'pointer';
           tooltip.style.display = 'block';
           tooltip.innerHTML = '<strong style="font-size:15px">' + node.title + '</strong><br><span style="font-size:12px;opacity:0.6">π ' + ((node.focus || 0) * 100).toFixed(2) + '% · ' + node.linkCount + ' links</span>';
@@ -531,6 +874,8 @@
 
       canvas.addEventListener('mouseleave', () => {
         hoveredNode = null;
+        hoveredCentroid = null;
+        centroidMembers = null;
         tooltip.style.display = 'none';
         draw();
       });
@@ -538,8 +883,36 @@
       canvas.addEventListener('click', (event) => {
         if (isDragging) return;
         const rect = canvas.getBoundingClientRect();
-        const node = findNode(event.clientX - rect.left, event.clientY - rect.top);
-        if (node) window.location.href = node.url;
+        const mx = event.clientX - rect.left;
+        const my = event.clientY - rect.top;
+
+        // Centroid click drills into that value (in tab preview);
+        // page-node click navigates as usual; empty-area click in
+        // preview exits preview.
+        if (tabHighlight) {
+          const c = findCentroid(mx, my);
+          if (c) {
+            activeFilters[activeDim].add(c.value);
+            tabHighlight = false;
+            applyFilterChange();
+            renderPillsRow();
+            return;
+          }
+        }
+
+        const node = findNode(mx, my);
+        if (node) {
+          window.location.href = node.url;
+          return;
+        }
+
+        if (tabHighlight) {
+          tabHighlight = false;
+          updateVisibleNodes();
+          updateTabStates();
+          updateStats();
+          draw();
+        }
       });
 
       canvas.addEventListener('mousedown', (event) => {
