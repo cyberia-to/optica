@@ -25,7 +25,7 @@
       <tr id="r{{ f.rank }}" class="page-row">
         <td class="col-rank" data-sort="{{ f.rank }}">{{ f.rank }}</td>
         <td class="col-title" data-sort="{{ f.title }}">
-          <a href="{{ f.url }}">{% if f.icon %}<span class="page-icon">{{ f.icon }}</span> {% endif %}{{ f.title }}</a>
+          <a href="{{ f.url }}" title="{{ f.title }}">{% if f.icon %}<span class="page-icon">{{ f.icon }}</span> {% endif %}<span class="row-title-text">{{ f.title }}</span></a>
           {% if f.tags %}<span class="row-tags">{% for t in f.tags %}<a href="/{{ t | slugify }}" class="row-tag">{{ t }}</a>{% endfor %}</span>{% endif %}
         </td>
         <td class="col-created" data-sort="{{ f.created_sort }}">{{ f.created }}</td>
@@ -40,7 +40,7 @@
       {% endfor %}
     </tbody>
   </table>
-  <div class="graph-stats">{{ total_files }} files</div>
+  <div class="graph-stats">{{ total_files }} files &middot; {{ total_connections }} connections</div>
 </div>
 
 <script>
@@ -57,30 +57,40 @@
   var rows = document.querySelectorAll('.page-row');
   if (!rows.length) return;
 
-  var ticking = false;
-
-  function updateHash() {
+  // Use IntersectionObserver to track which row sits at the top of
+  // the viewport. The old approach iterated all 22k rows per scroll
+  // event, calling getBoundingClientRect each time and forcing
+  // 22k layout flushes per frame — laggy + the URL hash didn't
+  // update reliably either.
+  //
+  // Strategy: define a thin "tracking band" at the top of the
+  // viewport via rootMargin and remember which rows are currently
+  // intersecting it. The topmost of those rows is the current entry;
+  // pick it on every observer batch.
+  var inBand = new Set();
+  function topmostInBand() {
     var best = null;
-    for (var i = 0; i < rows.length; i++) {
-      var rect = rows[i].getBoundingClientRect();
-      if (rect.top >= -10) {
-        best = rows[i];
-        break;
+    inBand.forEach(function(r) {
+      if (!best) { best = r; return; }
+      // earlier in DOM = higher in the scrolled page
+      if (r.compareDocumentPosition(best) & Node.DOCUMENT_POSITION_FOLLOWING) {
+        best = r;
       }
-      best = rows[i];
-    }
-    if (best && best.id) {
-      history.replaceState(null, '', '#' + best.id);
-    }
-    ticking = false;
+    });
+    return best;
   }
-
-  window.addEventListener('scroll', function() {
-    if (!ticking) {
-      ticking = true;
-      requestAnimationFrame(updateHash);
+  var io = new IntersectionObserver(function(entries) {
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      if (e.isIntersecting) inBand.add(e.target);
+      else inBand.delete(e.target);
     }
-  }, { passive: true });
+    var t = topmostInBand();
+    if (t && t.id && location.hash !== '#' + t.id) {
+      history.replaceState(null, '', '#' + t.id);
+    }
+  }, { rootMargin: '0px 0px -92% 0px' });
+  rows.forEach(function(r) { io.observe(r); });
 
   // Column sorting
   var thead = document.querySelector('.pages-table thead');

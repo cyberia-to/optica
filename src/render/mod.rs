@@ -521,49 +521,38 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-/// Extract git dates for all files under a directory.
-/// Returns a map: absolute_path -> (created_iso, modified_iso).
-/// Runs a single `git log` command for efficiency.
-fn git_dates(input_dir: &Path) -> HashMap<String, (String, String)> {
-    // Find the git repo root
-    let repo_root = std::process::Command::new("git")
+/// Find the git repo top-level for a given working directory.
+fn find_repo_root(dir: &Path) -> Option<PathBuf> {
+    std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
-        .current_dir(input_dir)
+        .current_dir(dir)
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim().to_string()));
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim().to_string()))
+}
 
-    let repo_root = match repo_root {
-        Some(r) => r,
-        None => return HashMap::new(),
-    };
-
+/// Extract git dates for every file tracked under one repo.
+/// Returns a map: absolute_path -> (created_iso, modified_iso).
+fn git_dates_for_repo(repo_root: &Path) -> HashMap<String, (String, String)> {
     let output = std::process::Command::new("git")
         .args(["log", "--format=format:%aI", "--name-only", "--diff-filter=ACMR"])
-        .current_dir(&repo_root)
+        .current_dir(repo_root)
         .output();
-
     let output = match output {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
         _ => return HashMap::new(),
     };
-
-    // Parse: date line followed by filename lines, separated by blank lines.
-    // Git log is newest-first, so first encounter = modified, last = created.
     let mut result: HashMap<String, (String, String)> = HashMap::new();
-
     let mut current_date = String::new();
     for line in output.lines() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        // Date lines start with digit (ISO format: 2026-03-02T...)
         if line.starts_with(|c: char| c.is_ascii_digit()) && line.contains('T') {
             current_date = line.to_string();
         } else if !current_date.is_empty() {
-            // Convert git-relative path to absolute
             let abs_path = repo_root.join(line);
             let key = abs_path.to_string_lossy().to_string();
             let entry = result
@@ -573,8 +562,40 @@ fn git_dates(input_dir: &Path) -> HashMap<String, (String, String)> {
             entry.0 = current_date.clone();
         }
     }
-
     result
+}
+
+/// Extract git dates for every file across the workspace, walking each
+/// page's source path to its enclosing repo. Subgraphs live in their
+/// own git repos — running a single `git log` from the root graph
+/// would miss every subgraph file. Discover unique repos via the
+/// parent directories of the supplied source paths and merge logs.
+fn git_dates_for_paths(paths: &[PathBuf]) -> HashMap<String, (String, String)> {
+    use std::collections::HashSet;
+    // Cache git rev-parse per parent dir so we make one call per
+    // distinct directory, not per file. Then dedupe to repo roots.
+    let mut parent_to_root: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
+    let mut roots: HashSet<PathBuf> = HashSet::new();
+    for p in paths {
+        if p.as_os_str().is_empty() {
+            continue;
+        }
+        let parent = match p.parent() {
+            Some(d) => d.to_path_buf(),
+            None => continue,
+        };
+        let root = parent_to_root
+            .entry(parent.clone())
+            .or_insert_with(|| find_repo_root(&parent));
+        if let Some(r) = root {
+            roots.insert(r.clone());
+        }
+    }
+    let mut merged: HashMap<String, (String, String)> = HashMap::new();
+    for root in roots {
+        merged.extend(git_dates_for_repo(&root));
+    }
+    merged
 }
 
 /// Compute percentile ranks (0.0–1.0) for a slice of values.
@@ -618,11 +639,18 @@ fn render_files_page(
     config: &SiteConfig,
     env: &minijinja::Environment,
 ) -> Result<String> {
-    // Extract git dates for all files
-    let dates = git_dates(&config.build.input_dir);
+    // Extract git dates from EVERY repo a public page comes from —
+    // the cyber repo plus each subgraph repo. A single git log from
+    // the root graph would miss everything outside it.
+    let public = store.public_pages(&config.content);
+    let source_paths: Vec<PathBuf> = public
+        .iter()
+        .map(|p| p.source_path.clone())
+        .collect();
+    let dates = git_dates_for_paths(&source_paths);
 
-    let mut pages: Vec<_> = store
-        .public_pages(&config.content)
+    let mut pages: Vec<_> = public
+        .into_iter()
         .into_iter()
         .map(|p| {
             let links_in = store.backlinks.get(&p.id).map(|b| b.len()).unwrap_or(0);
@@ -727,6 +755,24 @@ fn render_files_page(
 
     let total = files_data.len();
 
+    // Count distinct undirected edges between public pages — same
+    // shape as the /graph stats (22629 files · 74237 connections).
+    let public_ids: std::collections::HashSet<&String> = pages.iter().map(|t| &t.0.id).collect();
+    let mut seen_edges: std::collections::HashSet<(&String, &String)> =
+        std::collections::HashSet::new();
+    for src in public_ids.iter() {
+        if let Some(targets) = store.forward_links.get(*src) {
+            for tgt in targets {
+                if !public_ids.contains(tgt) {
+                    continue;
+                }
+                let key = if *src < tgt { (*src, tgt) } else { (tgt, *src) };
+                seen_edges.insert(key);
+            }
+        }
+    }
+    let total_connections = seen_edges.len();
+
     let ctx = minijinja::context! {
         site => config.site,
         style => config.style,
@@ -740,6 +786,7 @@ fn render_files_page(
         page_count => total,
         files => files_data,
         total_files => total,
+        total_connections => total_connections,
     };
 
     let tmpl = env.get_template("files.html")?;
