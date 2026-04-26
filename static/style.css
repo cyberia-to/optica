@@ -610,8 +610,8 @@ hr {
     bottom: 1.25rem;
     left: 1.25rem;
     z-index: 25;
-    width: 16rem;
-    height: 14rem;
+    width: 11rem;
+    height: 17rem;
     pointer-events: none;
 }
 
@@ -672,39 +672,98 @@ hr {
     filter: drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 45%, transparent));
 }
 
+/* Satellites read as sidebar rows: small circular orb + always-on
+   label, stacked vertically above the main graph orb. The cluster
+   then mirrors the page menu's icon-+-label rhythm rather than
+   making the user hover to discover what each orb is. */
 .app-orb--sat {
-    width: 2.4rem;
-    height: 2.4rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.25rem 0.6rem 0.25rem 0.25rem;
+    border-radius: 999px;
+    width: auto;
+    height: auto;
+    background: transparent;
+    box-shadow: none;
 }
-.app-orb--sat .app-orb-glyph { font-size: 1.05rem; }
+.app-orb--sat:hover {
+    transform: none;
+    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+    box-shadow: none;
+}
+.app-orb--sat.active {
+    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+    box-shadow: none;
+}
+.app-orb--sat .app-orb-glyph {
+    width: 1.85rem;
+    height: 1.85rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    flex-shrink: 0;
+    font-size: 1.05rem;
+    background: radial-gradient(
+        circle at 50% 38%,
+        color-mix(in srgb, var(--color-bg) 80%, transparent) 0%,
+        color-mix(in srgb, var(--color-bg) 95%, transparent) 70%
+    );
+    box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--color-primary) 28%, transparent),
+        0 0 12px color-mix(in srgb, var(--color-primary) 18%, transparent);
+    transition: box-shadow 0.22s ease;
+}
+.app-orb--sat:hover .app-orb-glyph,
+.app-orb--sat.active .app-orb-glyph {
+    box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--color-primary) 70%, transparent),
+        0 0 18px color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
 
-/* Constellation positions — graph anchored bottom-left as the main
-   orb, Files and Blog drift up and to the right as small satellites. */
+/* Layout — graph anchors the corner, Files + Blog stack above it. */
 .app-orb--graph { bottom: 0; left: 0; }
-.app-orb--files { bottom: 11rem; left: 1.5rem; }
-.app-orb--blog  { bottom: 8.5rem; left: 11.5rem; }
+.app-orb--files { bottom: 14.5rem; left: 0.2rem; }
+.app-orb--blog  { bottom: 11.8rem; left: 0.2rem; }
 
 .app-orb-glyph { line-height: 1; }
 
-/* Name labels appear to the right of each orb on hover/active so
-   the cluster stays quiet at rest but every orb is identifiable. */
+/* Satellite labels are always visible — they sit inline next to
+   the small orb just like sidebar rows. */
 .app-orb-name {
+    position: static;
+    opacity: 0.85;
+    transform: none;
+    margin: 0;
+    padding: 0;
+    font-size: 0.88rem;
+    letter-spacing: 0.02em;
+    color: var(--color-text);
+    pointer-events: none;
+    white-space: nowrap;
+    transition: opacity 0.18s ease, color 0.18s ease;
+}
+.app-orb--sat:hover .app-orb-name { opacity: 1; }
+.app-orb--sat.active .app-orb-name { opacity: 1; color: var(--color-primary); }
+
+/* Main orb's label keeps the floating-pill behaviour — appears to
+   the right on hover/active. */
+.app-orb--main .app-orb-name {
     position: absolute;
     left: 100%;
     top: 50%;
     transform: translateY(-50%) translateX(-4px);
-    margin-left: 0.5rem;
-    padding: 0.05rem 0.5rem;
-    font-size: 0.7rem;
-    letter-spacing: 0.04em;
+    margin-left: 0.6rem;
+    padding: 0.1rem 0.6rem;
+    font-size: 0.8rem;
     color: var(--color-primary);
     opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.18s ease, transform 0.18s ease;
-    white-space: nowrap;
+    background: color-mix(in srgb, var(--color-bg) 70%, transparent);
+    border-radius: 4px;
 }
-.app-orb:hover .app-orb-name,
-.app-orb.active .app-orb-name {
+.app-orb--main:hover .app-orb-name,
+.app-orb--main.active .app-orb-name {
     opacity: 0.9;
     transform: translateY(-50%) translateX(0);
 }
