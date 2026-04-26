@@ -143,10 +143,14 @@ fn handle_sse_reload(
         }
     }
 
-    // Wait up to 300s for a rebuild (poll every 200ms).
-    // 300s is 5× longer than the slowest observed rebuild (~60s).
+    // Short-poll: hold the SSE response for at most 25s, then send a
+    // ping and let the client reconnect. Long holds (5 min) keep
+    // every browser tab in a "still loading" state — the network
+    // tab shows /__reload as pending, and some browsers extend the
+    // page loading indicator to match. 25s is short enough to feel
+    // settled, long enough to avoid reconnect storms.
     let start = Instant::now();
-    while running.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(300) {
+    while running.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(25) {
         if version.load(Ordering::SeqCst) != server_version {
             let new_version = version.load(Ordering::SeqCst);
             let body = format!("data: reload:{}\n\n", new_version);
@@ -191,18 +195,61 @@ fn handle_request(request: tiny_http::Request, output_dir: &Path, inject_reload:
             }
         }
 
-        let response = tiny_http::Response::from_data(content)
+        // HTML must always be re-fetched so live-reload picks up
+        // template changes. Static assets — esp. the multi-megabyte
+        // graph-data.js — get a content-hash ETag so browsers can
+        // skip the body on revalidation (304). Without ETag the
+        // `must-revalidate` cache header is meaningless: the server
+        // never says "not modified", so every navigation re-downloads
+        // the full asset.
+        let is_html = content_type.starts_with("text/html");
+        let cache_header: &[u8] = if is_html {
+            b"no-cache, no-store, must-revalidate"
+        } else {
+            b"public, max-age=0, must-revalidate"
+        };
+        let etag = if is_html {
+            String::new()
+        } else {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            content.hash(&mut h);
+            format!("\"{:x}\"", h.finish())
+        };
+        // If the client already has this version, return 304 with no body.
+        if !is_html
+            && !etag.is_empty()
+            && request
+                .headers()
+                .iter()
+                .any(|h| h.field.equiv("If-None-Match") && h.value.as_str() == etag)
+        {
+            let response = tiny_http::Response::empty(304)
+                .with_header(
+                    tiny_http::Header::from_bytes(b"Cache-Control", cache_header).unwrap(),
+                )
+                .with_header(
+                    tiny_http::Header::from_bytes(b"ETag", etag.as_bytes()).unwrap(),
+                )
+                .with_header(tiny_http::Header::from_bytes(b"Connection", b"close").unwrap());
+            let _ = request.respond(response);
+            return;
+        }
+
+        let mut response = tiny_http::Response::from_data(content)
             .with_header(
                 tiny_http::Header::from_bytes(b"Content-Type", content_type.as_bytes()).unwrap(),
             )
             .with_header(
-                tiny_http::Header::from_bytes(
-                    b"Cache-Control",
-                    b"no-cache, no-store, must-revalidate",
-                )
-                .unwrap(),
+                tiny_http::Header::from_bytes(b"Cache-Control", cache_header).unwrap(),
             )
             .with_header(tiny_http::Header::from_bytes(b"Connection", b"close").unwrap());
+        if !etag.is_empty() {
+            response = response.with_header(
+                tiny_http::Header::from_bytes(b"ETag", etag.as_bytes()).unwrap(),
+            );
+        }
         let _ = request.respond(response);
     } else {
         let response = tiny_http::Response::from_string("404 Not Found")
