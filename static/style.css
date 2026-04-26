@@ -1293,21 +1293,20 @@ hr {
    TABLE OF CONTENTS
    ============================================================ */
 
+/* Plain block — no box, no border, no background. The TOC reads
+   as a first-class heading + nested list, the same way the rest of
+   the page renders headings and lists. */
 .toc {
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    padding: 1rem 1.5rem;
-    margin-bottom: 2rem;
-    font-size: 0.9rem;
+    margin: 0 0 2rem;
+    padding: 0;
+    background: none;
+    border: none;
 }
 
+/* "Contents" inherits the standard h3 typography — same weight,
+   size, color, line-height as any other section heading. */
 .toc h3 {
-    margin: 0 0 0.5rem 0;
-    font-size: 0.85rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    opacity: 0.5;
+    margin: 0 0 0.6rem;
 }
 
 .toc ul {
