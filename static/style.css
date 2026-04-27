@@ -711,7 +711,9 @@ hr {
     z-index: 20;
     display: flex;
     flex-direction: column;
-    padding: 0.6rem 0 1rem;
+    /* No top padding here — the sidebar-header carries the top
+       offset so it lines up with the contribute fab's top: 0.6rem. */
+    padding: 0 0 1rem;
     overflow-y: auto;
 }
 
