@@ -715,29 +715,80 @@ hr {
     overflow-y: auto;
 }
 
-/* Title sits above the menu with a small gap of breathing room —
-   tight enough that the eye reads "app + items" as one block,
-   loose enough that the title doesn't feel crammed onto the menu. */
+/* Bold app-launcher header — big icon + heavy label, mirroring
+   the contribute fab on the top-right. Reads as the site's
+   identity badge, not as a tagline above a menu. */
 .sidebar-header {
-    padding: 0.5rem 1rem 0.65rem;
+    padding: 0.75rem 1rem 1rem;
     border-bottom: none;
-    margin-bottom: 0;
+    margin-bottom: 0.25rem;
 }
 
 .site-title {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.7rem;
     font-weight: 700;
-    font-size: 1.15rem;
+    font-size: 1.6rem;
+    line-height: 1;
     color: var(--color-text);
     white-space: nowrap;
 }
 
 .site-icon {
-    font-size: 1.25rem;
+    width: 2.4rem;
+    height: 2.4rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.2rem;
     line-height: 1;
     flex-shrink: 0;
+}
+
+/* Top-right contribute fab — mirrors the sidebar header's icon
+   size and label weight so the eye reads the two as a pair
+   (identity on the left, call-to-action on the right). */
+.contribute-fab {
+    position: fixed;
+    top: 0.9rem;
+    right: 1.25rem;
+    z-index: 25;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0;
+    color: var(--color-text);
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 1.6rem;
+    line-height: 1;
+    white-space: nowrap;
+    transition: color 0.18s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.contribute-fab:hover {
+    color: var(--color-primary);
+    transform: translateY(-1px);
+}
+.contribute-fab-icon {
+    width: 2.4rem;
+    height: 2.4rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.contribute-fab-icon svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+.contribute-fab-name {
+    letter-spacing: 0.01em;
+}
+
+@media (max-width: 768px) {
+    .contribute-fab-name { display: none; }
 }
 
 .site-title:hover {
