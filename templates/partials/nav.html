@@ -91,13 +91,13 @@
         {% endif %}
 
     </nav>
-</aside>
 
-<!-- Primary functions in the bottom-left: Graph as the bold
-     central orb, Files and Blog as satellite rows that reuse
-     .sidebar-menu / .sidebar-item / .sidebar-icon / .sidebar-label
-     so their geometry is identical to the workspace nav above. -->
-<nav class="app-launcher" aria-label="Site sections">
+    <!-- Primary functions live INSIDE the sidebar's flex column so
+         their geometry is inherited verbatim — same width, same
+         left edge, same row format. .sidebar-nav has flex: 1 so
+         the launcher gets pushed to the bottom of the sidebar
+         automatically. -->
+    <nav class="app-launcher" aria-label="Site sections">
     <ul class="sidebar-menu app-launcher-list">
         <li class="sidebar-item">
             <a href="/files">
@@ -159,7 +159,8 @@
         <span class="app-orb-name">Graph</span>
     </a>
     {% endif %}
-</nav>
+    </nav>
+</aside>
 
 <script>
     (function () {

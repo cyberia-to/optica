@@ -605,19 +605,16 @@ hr {
    reads as a launcher, not a flat menu.
    ============================================================ */
 
-/* Launcher container — fixed at bottom-left, sized to the sidebar
-   so its rows occupy the same column as the workspace nav above. */
+/* Launcher lives inside the .sidebar flex column. The .sidebar-nav
+   above it has flex: 1, so the launcher is pushed down to the
+   bottom of the sidebar automatically — no fixed positioning, no
+   width math, geometry is inherited verbatim from the sidebar. */
 .app-launcher {
-    position: fixed;
-    bottom: 1.25rem;
-    left: 0;
-    z-index: 25;
-    width: var(--sidebar-width, 220px);
-    pointer-events: none;
+    margin-top: auto;
+    padding-bottom: 1rem;
 }
 
 .app-launcher-list {
-    pointer-events: auto;
     margin: 0 0 0.75rem;
     padding: 0;
     list-style: none;
