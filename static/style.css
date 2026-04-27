@@ -605,24 +605,47 @@ hr {
    reads as a launcher, not a flat menu.
    ============================================================ */
 
-/* Container hugs the sidebar's left edge and width so the satellite
-   rows sit on the same column as the sidebar items above them. */
-.app-orbs {
+/* Launcher container — fixed at bottom-left, sized to the sidebar
+   so its rows occupy the same column as the workspace nav above. */
+.app-launcher {
     position: fixed;
     bottom: 1.25rem;
     left: 0;
     z-index: 25;
     width: var(--sidebar-width, 220px);
-    height: 17rem;
     pointer-events: none;
 }
 
-.app-orb {
+.app-launcher-list {
     pointer-events: auto;
-    position: absolute;
+    margin: 0 0 0.75rem;
+    padding: 0;
+    list-style: none;
+}
+
+/* SVG icons inside .sidebar-icon mirror the size of the emoji
+   glyphs sidebar items use (~1.1rem) so the line-art weight
+   reads as a peer of 🌍 / 🧠 / etc., not larger. */
+.app-launcher-list .sidebar-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+}
+.app-launcher-list .sidebar-icon svg {
+    width: 1.1rem;
+    height: 1.1rem;
+    display: block;
+}
+
+/* Graph orb — circular hero. Stays a separate visual from the
+   sidebar-style rows above. */
+.app-orb {
+    pointer-events: auto;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 1rem;
     border-radius: 50%;
     background: radial-gradient(
         circle at 50% 38%,
@@ -674,81 +697,9 @@ hr {
     filter: drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 45%, transparent));
 }
 
-/* Satellites match .sidebar-item a geometry pixel-for-pixel: same
-   gap (0.6rem), same padding (0.45rem 1rem), same opacity (0.7→1),
-   same font-size (0.95rem), same active treatment. The satellite
-   row spans the full sidebar column so its left edge lines up with
-   the sidebar items above. */
-.app-orb--sat {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    padding: 0.45rem 1rem;
-    border-radius: 0;
-    width: 100%;
-    height: auto;
-    background: transparent;
-    box-shadow: none;
-    color: var(--color-text);
-    opacity: 0.7;
-    font-size: 0.95rem;
-    box-sizing: border-box;
-    transition: opacity 0.15s ease, background 0.15s ease;
-}
-.app-orb--sat:hover {
-    transform: none;
-    opacity: 1;
-    background: rgba(255, 255, 255, 0.04);
-    box-shadow: none;
-}
-.app-orb--sat.active {
-    opacity: 1;
-    color: var(--color-primary);
-    background: rgba(168, 85, 247, 0.06);
-    box-shadow: none;
-}
-.app-orb--sat .app-orb-glyph {
-    width: 1.4rem;
-    height: 1.4rem;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    font-size: 1.1rem;
-    background: none;
-    border-radius: 0;
-    box-shadow: none;
-}
-.app-orb--sat .app-orb-glyph svg {
-    width: 100%;
-    height: 100%;
-    display: block;
-}
-
-/* Layout — graph anchors the corner, Files + Blog stack above it. */
-.app-orb--graph { bottom: 0; left: 1rem; }
-.app-orb--files { bottom: 14.5rem; left: 0; }
-.app-orb--blog  { bottom: 12.2rem; left: 0; }
-
 .app-orb-glyph { line-height: 1; }
 
-/* Satellite labels are inline — same typography as a sidebar row. */
 .app-orb-name {
-    position: static;
-    opacity: 1;
-    transform: none;
-    margin: 0;
-    padding: 0;
-    font-size: 0.95rem;
-    letter-spacing: normal;
-    color: inherit;
-    pointer-events: none;
-    white-space: nowrap;
-}
-
-/* Main orb's label keeps the floating-pill behaviour — appears to
-   the right on hover/active. */
-.app-orb--main .app-orb-name {
     position: absolute;
     left: 100%;
     top: 50%;
@@ -760,9 +711,12 @@ hr {
     opacity: 0;
     background: color-mix(in srgb, var(--color-bg) 70%, transparent);
     border-radius: 4px;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    white-space: nowrap;
 }
-.app-orb--main:hover .app-orb-name,
-.app-orb--main.active .app-orb-name {
+.app-orb:hover .app-orb-name,
+.app-orb.active .app-orb-name {
     opacity: 0.9;
     transform: translateY(-50%) translateX(0);
 }
