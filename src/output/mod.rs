@@ -24,6 +24,9 @@ const DEFAULT_SEARCH_JS: &str = include_str!("../../static/search.js");
 const DEFAULT_GRAPH_JS: &str = include_str!("../../static/graph.js");
 const DEFAULT_TOPICS_JS: &str = include_str!("../../static/topics.js");
 
+/// Anonymous mask icon used by the contribute fab.
+const ANONYMOUS_MASK_PNG: &[u8] = include_bytes!("../../static/anonymous-mask.png");
+
 /// Play font files (woff2) baked into binary — latin only
 const FONT_FILES: &[(&str, &[u8])] = &[
     (
@@ -246,6 +249,9 @@ fn write_default_static(output_dir: &Path, config: &SiteConfig) -> Result<()> {
 
     // Write topics JS
     fs::write(static_dir.join("topics.js"), DEFAULT_TOPICS_JS)?;
+
+    // Write anonymous mask icon (used as a CSS mask on the contribute fab).
+    fs::write(static_dir.join("anonymous-mask.png"), ANONYMOUS_MASK_PNG)?;
 
     // Write font files
     let fonts_dir = static_dir.join("fonts");

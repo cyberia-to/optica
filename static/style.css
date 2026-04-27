@@ -773,19 +773,29 @@ hr {
     color: var(--color-primary);
     transform: translateY(-1px);
 }
+/* Mask the Guy Fawkes PNG with the primary colour. CSS mask lets
+   us drop the alpha channel of the PNG onto a flat fill so the
+   icon recolours with the rest of the UI (hover, theme tweaks)
+   instead of being baked white. */
 .contribute-fab-icon {
     width: 3.5rem;
     height: 3.5rem;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    display: inline-block;
     flex-shrink: 0;
-    color: var(--color-primary);
+    background-color: var(--color-primary);
+    -webkit-mask-image: url("/static/anonymous-mask.png");
+            mask-image: url("/static/anonymous-mask.png");
+    -webkit-mask-size: contain;
+            mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+            mask-position: center;
+    transition: background-color 0.18s ease;
 }
-.contribute-fab-icon svg {
-    width: 100%;
-    height: 100%;
-    display: block;
+.contribute-fab:hover .contribute-fab-icon {
+    background-color: var(--color-primary);
+    filter: brightness(1.2);
 }
 .contribute-fab-name {
     letter-spacing: 0.01em;
