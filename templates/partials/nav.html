@@ -25,19 +25,27 @@
     </div>
 </header>
 
-<!-- Top-right contribute fab — mirrors the sidebar's top-left site
-     title at the same icon size. Anonymous-figure SVG hints "join,
-     no questions asked"; the bold label is the call to action. -->
+<!-- Top-right contribute fab — mirrors the top-left identity
+     header. Layout is reversed (label first, icon at the outer
+     right edge) so icons sit at the two outermost corners and the
+     labels read inward. -->
 <a href="/contribute" class="contribute-fab" aria-label="Contribute">
+    <span class="contribute-fab-name">contribute</span>
     <span class="contribute-fab-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 3 C 7.5 3, 4.5 6.5, 4.5 11.5 C 4.5 15, 6 17.5, 8 19 L 8 21.5 L 16 21.5 L 16 19 C 18 17.5, 19.5 15, 19.5 11.5 C 19.5 6.5, 16.5 3, 12 3 Z" />
-            <path d="M8.2 11.5 C 8.2 13.6, 9.9 15.3, 12 15.3 C 14.1 15.3, 15.8 13.6, 15.8 11.5" opacity="0.55" />
-            <circle cx="9.5" cy="10.5" r="0.7" fill="currentColor" stroke="none" />
-            <circle cx="14.5" cy="10.5" r="0.7" fill="currentColor" stroke="none" />
+        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <!-- V-for-Vendetta / Guy Fawkes mask: V-shaped jaw,
+                 almond eyes, curling handlebar moustache, pointed
+                 goatee. -->
+            <path d="M18 18 L 82 18 Q 82 38, 50 92 Q 18 38, 18 18 Z" />
+            <ellipse cx="33" cy="38" rx="6.5" ry="3" fill="currentColor" stroke="none" />
+            <ellipse cx="67" cy="38" rx="6.5" ry="3" fill="currentColor" stroke="none" />
+            <path d="M24 30 L 42 27" />
+            <path d="M58 27 L 76 30" />
+            <path d="M40 58 Q 32 64, 26 58" />
+            <path d="M60 58 Q 68 64, 74 58" />
+            <path d="M43 65 L 50 78 L 57 65" />
         </svg>
     </span>
-    <span class="contribute-fab-name">contribute</span>
 </a>
 
 <aside class="sidebar">

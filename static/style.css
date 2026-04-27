@@ -715,11 +715,11 @@ hr {
     overflow-y: auto;
 }
 
-/* Bold app-launcher header — big icon + heavy label, mirroring
-   the contribute fab on the top-right. Reads as the site's
-   identity badge, not as a tagline above a menu. */
+/* Bold identity badge — icon dominates, label sits inside.
+   Mirrors the contribute fab on the top-right so the two outer
+   corners frame the page. */
 .sidebar-header {
-    padding: 0.75rem 1rem 1rem;
+    padding: 0.6rem 1rem 1rem;
     border-bottom: none;
     margin-bottom: 0.25rem;
 }
@@ -727,41 +727,42 @@ hr {
 .site-title {
     display: inline-flex;
     align-items: center;
-    gap: 0.7rem;
+    gap: 0.75rem;
     font-weight: 700;
-    font-size: 1.6rem;
+    font-size: 1.35rem;
     line-height: 1;
     color: var(--color-text);
     white-space: nowrap;
 }
 
 .site-icon {
-    width: 2.4rem;
-    height: 2.4rem;
+    width: 3.5rem;
+    height: 3.5rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 2.2rem;
+    font-size: 3.2rem;
     line-height: 1;
     flex-shrink: 0;
 }
 
-/* Top-right contribute fab — mirrors the sidebar header's icon
-   size and label weight so the eye reads the two as a pair
-   (identity on the left, call-to-action on the right). */
+/* Top-right contribute fab — same icon size as the identity
+   badge. Layout is reversed (label first, icon last) so the icon
+   ends up flush at the right edge of the viewport, mirroring the
+   identity badge whose icon sits flush at the left edge. */
 .contribute-fab {
     position: fixed;
-    top: 0.9rem;
-    right: 1.25rem;
+    top: 0.6rem;
+    right: 1rem;
     z-index: 25;
     display: inline-flex;
     align-items: center;
-    gap: 0.7rem;
+    gap: 0.75rem;
     padding: 0;
     color: var(--color-text);
     text-decoration: none;
     font-weight: 700;
-    font-size: 1.6rem;
+    font-size: 1.35rem;
     line-height: 1;
     white-space: nowrap;
     transition: color 0.18s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
@@ -771,12 +772,13 @@ hr {
     transform: translateY(-1px);
 }
 .contribute-fab-icon {
-    width: 2.4rem;
-    height: 2.4rem;
+    width: 3.5rem;
+    height: 3.5rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    color: var(--color-primary);
 }
 .contribute-fab-icon svg {
     width: 100%;
