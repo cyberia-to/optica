@@ -212,12 +212,11 @@
 
 <!-- Lunar machine time clock — bottom-right. Two-line readout:
      LMT date (year · moon · day-of-moon) on top, UTC time below.
-     Mirrors cyb.ai's bottom-right unix-day display but in lunar
-     coordinates with explicit component labels. -->
-<div class="lmt-clock" aria-live="off">
-    <div class="lmt-clock-date" aria-hidden="true"></div>
-    <div class="lmt-clock-time" aria-hidden="true"></div>
-</div>
+     Clicking opens the /mt page (Machine Time spec). -->
+<a href="/mt" class="lmt-clock" aria-label="Machine Time">
+    <span class="lmt-clock-date" aria-hidden="true"></span>
+    <span class="lmt-clock-time" aria-hidden="true"></span>
+</a>
 
 <script>
     (function () {
