@@ -210,11 +210,14 @@
     </nav>
 </aside>
 
-<!-- Lunar machine time clock — bottom-right, mirrors cyb.ai's
-     bottom-right unix-day timestamp but in lunar coords:
-     YY (machine year = year − 1970) · MM (lunar month) · DD
-     (lunar day) · UTC HH:MM. -->
-<div class="lmt-clock" aria-live="off"></div>
+<!-- Lunar machine time clock — bottom-right. Two-line readout:
+     LMT date (year · moon · day-of-moon) on top, UTC time below.
+     Mirrors cyb.ai's bottom-right unix-day display but in lunar
+     coordinates with explicit component labels. -->
+<div class="lmt-clock" aria-live="off">
+    <div class="lmt-clock-date" aria-hidden="true"></div>
+    <div class="lmt-clock-time" aria-hidden="true"></div>
+</div>
 
 <script>
     (function () {
@@ -281,11 +284,19 @@
                 : Math.floor((jd - firstMoon) / SYNODIC) + 1;
             var hh = String(now.getUTCHours()).padStart(2, "0");
             var mn = String(now.getUTCMinutes()).padStart(2, "0");
-            return yy + "." + mm + "." + dd + " " + hh + ":" + mn;
+            return {
+                date: yy + " · " + mm + " · " + dd,
+                time: hh + ":" + mn,
+            };
         }
-        var clock = document.querySelector(".lmt-clock");
-        if (clock) {
-            function tick() { clock.textContent = lmtNow(); }
+        var clockDate = document.querySelector(".lmt-clock-date");
+        var clockTime = document.querySelector(".lmt-clock-time");
+        if (clockDate && clockTime) {
+            function tick() {
+                var t = lmtNow();
+                clockDate.textContent = t.date;
+                clockTime.textContent = t.time;
+            }
             tick();
             // Re-tick at the next minute boundary, then every minute.
             var msToMin = 60000 - (Date.now() % 60000);

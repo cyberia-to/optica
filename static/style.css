@@ -805,20 +805,36 @@ hr {
     .contribute-fab-name { display: none; }
 }
 
-/* Lunar machine time — fixed bottom-right. Mirrors cyb.ai's
-   bottom-right unix-day timestamp; here we surface the LMT
-   coordinates: YY.MM.DD HH:MM (UTC). */
+/* Lunar machine time — fixed bottom-right, two-line readout.
+   Date (year · moon · day-of-moon) above, UTC time below. Big,
+   bold, slightly glowing — mirrors the visual weight of the
+   contribute fab on the top-right so the four corners frame the
+   page. */
 .lmt-clock {
     position: fixed;
     bottom: 1rem;
-    right: 1rem;
+    right: 1.25rem;
     z-index: 25;
     font-family: var(--font-mono, monospace);
-    font-size: 0.85rem;
-    letter-spacing: 0.05em;
+    text-align: right;
+    line-height: 1;
     color: var(--color-primary);
-    opacity: 0.7;
     pointer-events: none;
+    text-shadow: 0 0 10px color-mix(in srgb, var(--color-primary) 35%, transparent);
+}
+
+.lmt-clock-date {
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    opacity: 0.7;
+    margin-bottom: 0.25rem;
+}
+
+.lmt-clock-time {
+    font-size: 2.1rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
 }
 
 .site-title:hover {
