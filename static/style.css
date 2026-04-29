@@ -805,6 +805,22 @@ hr {
     .contribute-fab-name { display: none; }
 }
 
+/* Lunar machine time — fixed bottom-right. Mirrors cyb.ai's
+   bottom-right unix-day timestamp; here we surface the LMT
+   coordinates: YY.MM.DD HH:MM (UTC). */
+.lmt-clock {
+    position: fixed;
+    bottom: 1rem;
+    right: 1rem;
+    z-index: 25;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.85rem;
+    letter-spacing: 0.05em;
+    color: var(--color-primary);
+    opacity: 0.7;
+    pointer-events: none;
+}
+
 .site-title:hover {
     color: var(--color-primary);
 }

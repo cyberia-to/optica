@@ -210,6 +210,12 @@
     </nav>
 </aside>
 
+<!-- Lunar machine time clock — bottom-right, mirrors cyb.ai's
+     bottom-right unix-day timestamp but in lunar coords:
+     YY (machine year = year − 1970) · MM (lunar month) · DD
+     (lunar day) · UTC HH:MM. -->
+<div class="lmt-clock" aria-live="off"></div>
+
 <script>
     (function () {
         var toggle = document.querySelector(
@@ -242,5 +248,51 @@
                     a.classList.add("active");
                 }
             });
+
+        // Lunar machine time — port of optica/src/lunar.rs.
+        // Synodic period 29.53059 d, reference new moon
+        // 2000-01-06 18:14 UTC (JD 2 451 550.26).
+        var SYNODIC = 29.53059;
+        var REF_NEW_MOON = 2451550.26;
+        function julianDay(d) {
+            var y = d.getUTCFullYear();
+            var m = d.getUTCMonth() + 1;
+            var day = d.getUTCDate();
+            if (m <= 2) { y -= 1; m += 12; }
+            var a = Math.floor(y / 100);
+            var b = 2 - a + Math.floor(a / 4);
+            return (
+                Math.floor(365.25 * (y + 4716)) +
+                Math.floor(30.6001 * (m + 1)) +
+                day + b - 1524.5
+            );
+        }
+        function lmtNow() {
+            var now = new Date();
+            var jd = julianDay(now);
+            var lunarAge = ((jd - REF_NEW_MOON) % SYNODIC + SYNODIC) % SYNODIC;
+            var dd = Math.min(Math.floor(lunarAge), 29) + 1;
+            var yy = now.getUTCFullYear() - 1970;
+            var yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+            var firstMoon = REF_NEW_MOON +
+                Math.ceil((julianDay(yearStart) - REF_NEW_MOON) / SYNODIC) * SYNODIC;
+            var mm = jd < firstMoon
+                ? 1
+                : Math.floor((jd - firstMoon) / SYNODIC) + 1;
+            var hh = String(now.getUTCHours()).padStart(2, "0");
+            var mn = String(now.getUTCMinutes()).padStart(2, "0");
+            return yy + "." + mm + "." + dd + " " + hh + ":" + mn;
+        }
+        var clock = document.querySelector(".lmt-clock");
+        if (clock) {
+            function tick() { clock.textContent = lmtNow(); }
+            tick();
+            // Re-tick at the next minute boundary, then every minute.
+            var msToMin = 60000 - (Date.now() % 60000);
+            setTimeout(function () {
+                tick();
+                setInterval(tick, 60000);
+            }, msToMin);
+        }
     })();
 </script>
