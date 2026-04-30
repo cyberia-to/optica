@@ -240,16 +240,18 @@
             });
         }
 
-        var path = window.location.pathname;
+        // Strip trailing slash for comparison so /cyb and /cyb/
+        // both count as the same path.
+        var path = window.location.pathname.replace(/\/$/, "");
         document
             .querySelectorAll(".sidebar-menu a, .app-launcher .app-orb")
             .forEach(function (a) {
-                var href = a.getAttribute("href");
-                if (
-                    href &&
-                    href !== "/" &&
-                    path.startsWith(href)
-                ) {
+                var href = (a.getAttribute("href") || "").replace(/\/$/, "");
+                if (!href || href === "/") return;
+                // Exact match OR href is a strict path prefix (next
+                // char must be "/", not just any continuation — so
+                // /cybics no longer matches /cyb's "active" rule).
+                if (path === href || path.indexOf(href + "/") === 0) {
                     a.classList.add("active");
                 }
             });
