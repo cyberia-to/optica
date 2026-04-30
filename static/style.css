@@ -920,24 +920,40 @@ hr {
 .sidebar-toggle {
     display: none;
     position: fixed;
-    top: 0.75rem;
-    left: 0.75rem;
+    top: 0.6rem;
+    left: 0.6rem;
     z-index: 40;
-    background: var(--color-surface);
-    border: none;
-    border-radius: 4px;
+    background: color-mix(in srgb, var(--color-bg) 85%, transparent);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
+    border-radius: 6px;
     cursor: pointer;
-    padding: 0.5rem;
+    padding: 0.55rem 0.6rem;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
+    box-shadow: 0 0 12px color-mix(in srgb, var(--color-primary) 18%, transparent);
 }
 
 .sidebar-toggle span {
     display: block;
-    width: 20px;
+    width: 22px;
     height: 2px;
-    background: var(--color-text);
-    transition: transform 0.2s;
+    background: var(--color-primary);
+    transition: transform 0.2s, opacity 0.2s;
+}
+
+.sidebar.open + .sidebar-toggle span:nth-child(1),
+.sidebar-toggle[aria-expanded="true"] span:nth-child(1) {
+    transform: translateY(7px) rotate(45deg);
+}
+.sidebar.open + .sidebar-toggle span:nth-child(2),
+.sidebar-toggle[aria-expanded="true"] span:nth-child(2) {
+    opacity: 0;
+}
+.sidebar.open + .sidebar-toggle span:nth-child(3),
+.sidebar-toggle[aria-expanded="true"] span:nth-child(3) {
+    transform: translateY(-7px) rotate(-45deg);
 }
 
 /* ============================================================
@@ -1491,6 +1507,13 @@ hr {
 
     .main-content {
         padding: 1rem 0.75rem 5rem;
+    }
+
+    /* Make room for the hamburger toggle that lives at top-left
+       of the viewport. Without this, the page title icon sits
+       directly under the toggle and looks crowded. */
+    .page-title-bar {
+        padding-left: 3.25rem;
     }
 
     h1 {

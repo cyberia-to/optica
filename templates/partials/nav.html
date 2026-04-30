@@ -34,6 +34,17 @@
     <span class="contribute-fab-icon" aria-hidden="true"></span>
 </a>
 
+<!-- Toggle lives OUTSIDE the sidebar so it stays clickable when
+     the sidebar slides offscreen on mobile (translateX(-100%)
+     would otherwise sweep the toggle away with it). -->
+<button
+    class="sidebar-toggle"
+    aria-label="Toggle sidebar"
+    aria-expanded="false"
+>
+    <span></span><span></span><span></span>
+</button>
+
 <aside class="sidebar">
     <div class="sidebar-header">
         <a href="/" class="site-title">
@@ -44,14 +55,6 @@
             >{% endif %}<span class="site-name">{{ site.title }}</span>
         </a>
     </div>
-
-    <button
-        class="sidebar-toggle"
-        aria-label="Toggle sidebar"
-        aria-expanded="false"
-    >
-        <span></span><span></span><span></span>
-    </button>
 
     <nav class="sidebar-nav" aria-label="Main navigation">
         {% if nav_menu is defined and nav_menu %}
