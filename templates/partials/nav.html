@@ -48,11 +48,10 @@
 <aside class="sidebar">
     <div class="sidebar-header">
         <a href="/" class="site-title">
-            {% if nav_menu and nav_menu[0] and nav_menu[0].icon %}<span
-                class="site-icon"
-                aria-hidden="true"
-                >{{ nav_menu[0].icon }}</span
-            >{% endif %}<span class="site-name">{{ site.title }}</span>
+            {%- for item in nav_menu if item.label == site.title and item.icon -%}
+            <span class="site-icon" aria-hidden="true">{{ item.icon }}</span>
+            {%- endfor -%}
+            <span class="site-name">{{ site.title }}</span>
         </a>
     </div>
 
