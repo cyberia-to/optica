@@ -211,95 +211,16 @@
                 },
             );
         </script>
-        <script>
-            // Hover-prefetch with strict at-most-one in-flight policy.
-            // Why: rapid-fire navigation (clicking sidebar items in
-            // quick succession) was getting the 3rd or 4th click
-            // stuck while the browser waited for in-flight prefetches
-            // to clear an HTTP/1.1 connection slot (tiny-http dev
-            // server has a 6-conn-per-origin cap). Keep only ONE
-            // <link rel=prefetch> in the document at a time, and
-            // remove it the moment a click commits — the browser
-            // releases the connection so the navigation has a slot.
-            //
-            // 250ms hover debounce (up from 120ms): casual mouse-overs
-            // during rapid clicking no longer fire prefetches at all,
-            // because the click happens before the timer.
-            (function () {
-                var seen = Object.create(null);
-                var pending = null;        // {href, timer} for the queued prefetch
-                var inflightLink = null;   // the active <link rel=prefetch>, if any
-                var DELAY = 250;
-                function shouldPrefetch(a) {
-                    if (!a || !a.href) return null;
-                    if (a.target === "_blank" || a.hasAttribute("download")) return null;
-                    try {
-                        var u = new URL(a.href);
-                        if (u.origin !== location.origin) return null;
-                        if (u.pathname === location.pathname) return null;
-                        // Heavy pages embed multi-megabyte inline data
-                        // (/graph and /tags ship the full graph;
-                        // /files lists 22k rows). Skip those entirely.
-                        if (/^\/(graph|tags|files)\/?$/.test(u.pathname)) return null;
-                        return u.href;
-                    } catch (err) {
-                        return null;
-                    }
-                }
-                function abortInflight() {
-                    if (inflightLink && inflightLink.parentNode) {
-                        inflightLink.parentNode.removeChild(inflightLink);
-                    }
-                    inflightLink = null;
-                }
-                function startPrefetch(href) {
-                    if (seen[href]) return;
-                    abortInflight();
-                    seen[href] = true;
-                    var link = document.createElement("link");
-                    link.rel = "prefetch";
-                    link.href = href;
-                    document.head.appendChild(link);
-                    inflightLink = link;
-                }
-                function cancelPending() {
-                    if (pending) {
-                        clearTimeout(pending.timer);
-                        pending = null;
-                    }
-                }
-                document.addEventListener("pointerover", function (e) {
-                    var a = e.target.closest && e.target.closest("a[href]");
-                    var href = shouldPrefetch(a);
-                    if (!href) return;
-                    if (pending && pending.href === href) return;
-                    cancelPending();
-                    pending = {
-                        href: href,
-                        timer: setTimeout(function () {
-                            startPrefetch(href);
-                            pending = null;
-                        }, DELAY),
-                    };
-                }, { passive: true });
-                document.addEventListener("pointerout", function (e) {
-                    var a = e.target.closest && e.target.closest("a[href]");
-                    if (!a) return;
-                    if (pending && pending.href && !a.href.endsWith(pending.href)) return;
-                    cancelPending();
-                }, { passive: true });
-                // On click commit: drop the pending timer AND yank
-                // any in-flight prefetch <link>. The browser releases
-                // the HTTP connection so navigation has a fresh slot
-                // — preventing the "rapid clicks → one stalls" race.
-                document.addEventListener("click", function (e) {
-                    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-                    var a = e.target.closest && e.target.closest("a[href]");
-                    if (!a) return;
-                    cancelPending();
-                    abortInflight();
-                }, true);
-            })();
-        </script>
+        <!-- Hover-prefetch removed. It was causing rapid-click stalls:
+             <link rel=prefetch> kicks off a fetch, and removing the
+             <link> element doesn't reliably abort the in-flight
+             request in Chromium — the fetch keeps consuming an
+             HTTP/1.1 connection slot until it completes. Multiple
+             rapid hovers saturate the 6-per-origin cap, queueing
+             the next navigation behind them. The browser already
+             does its own speculation rules; the cost of a single
+             round-trip on click is negligible compared to the
+             stall this script was producing. -->
+
     </body>
 </html>
