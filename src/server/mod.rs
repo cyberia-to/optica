@@ -11,7 +11,7 @@ use colored::Colorize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub fn serve(
     config: &SiteConfig,
@@ -82,11 +82,9 @@ pub fn serve(
                         .nth(1)
                         .and_then(|q| q.strip_prefix("v="))
                         .and_then(|v| v.parse().ok());
-                    // Handle SSE in a separate thread so the server keeps serving
                     let version = build_version.clone();
-                    let is_running = running.clone();
                     std::thread::spawn(move || {
-                        handle_sse_reload(request, &version, &is_running, client_version);
+                        handle_reload_poll(request, &version, client_version);
                     });
                 } else {
                     // Handle regular requests in a thread to keep the main loop responsive.
@@ -108,87 +106,38 @@ pub fn serve(
     Ok(())
 }
 
-/// SSE long-poll: wait for build_version to change, then send "reload" event.
-/// EventSource on the client will automatically reconnect after receiving.
+/// Live-reload poll handler — responds immediately, never holds.
 ///
-/// Root cause of prior instability: SSE timeout (30s) ≈ rebuild time (30-60s).
-/// The version would increment DURING the reconnection window between the old
-/// SSE closing and the new SSE opening — the event was lost. The new SSE saw
-/// the already-incremented version as "current" and waited for the NEXT change.
+/// Client polls /__reload?v=N every ~1.5s. Server compares N to the
+/// build version: if the client is behind, respond "reload"; otherwise
+/// respond "current:N" with the server's version so the client can
+/// resync if it falls behind.
 ///
-/// Fix 1: client sends its last-known version as ?v=N. If the server's version
-/// is already ahead, send reload immediately (catches the missed event).
-/// Fix 2: timeout increased to 300s (5 min) to outlast any rebuild.
-fn handle_sse_reload(
+/// No long-held connections. Each poll is a sub-millisecond round
+/// trip. Rapid navigation can no longer leave zombie SSE sockets
+/// in CLOSE_WAIT or tie up HTTP/1.1 connection slots.
+fn handle_reload_poll(
     request: tiny_http::Request,
     version: &AtomicU64,
-    running: &AtomicBool,
     client_version: Option<u64>,
 ) {
     let server_version = version.load(Ordering::SeqCst);
-
-    // If client sent a version and it's behind the server, reload immediately.
-    // This catches the race where the version incremented during reconnection.
-    if let Some(cv) = client_version {
+    let body = if let Some(cv) = client_version {
         if cv < server_version {
-            let body = format!("data: reload\n\n");
-            let response = tiny_http::Response::from_string(body)
-                .with_header(
-                    tiny_http::Header::from_bytes(b"Content-Type", b"text/event-stream").unwrap(),
-                )
-                .with_header(tiny_http::Header::from_bytes(b"Cache-Control", b"no-cache").unwrap())
-                .with_header(tiny_http::Header::from_bytes(b"Connection", b"close").unwrap());
-            let _ = request.respond(response);
-            return;
+            format!("reload:{}", server_version)
+        } else {
+            format!("current:{}", server_version)
         }
-    }
-
-    // Stream the SSE response through the raw socket so we can
-    // detect client disconnect immediately. Previous version held
-    // the connection in a sleep loop for 25s with no I/O — when
-    // the browser closed the EventSource on navigation, the server
-    // socket lingered in CLOSE_WAIT for the full 25s. Rapid clicks
-    // accumulated zombie connections and the next navigation stalled
-    // waiting for an HTTP/1.1 connection slot to free up.
-    //
-    // Now: write the response headers, then a keep-alive comment
-    // every 500ms. A write failure (broken pipe / connection reset)
-    // means the client navigated away — exit the loop, drop the
-    // socket. Slot frees within 500ms instead of 25s.
-    use std::io::Write;
-    let mut w = request.into_writer();
-    let head = b"HTTP/1.1 200 OK\r\n\
-Content-Type: text/event-stream\r\n\
-Cache-Control: no-cache\r\n\
-Connection: close\r\n\
-X-Accel-Buffering: no\r\n\
-\r\n";
-    if w.write_all(head).is_err() || w.flush().is_err() {
-        return;
-    }
-
-    let start = Instant::now();
-    while running.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(15) {
-        let current = version.load(Ordering::SeqCst);
-        if current != server_version {
-            let _ = write!(w, "data: reload:{}\n\n", current);
-            let _ = w.flush();
-            return;
-        }
-        // SSE comment line (starts with `:`). Doubles as keep-alive
-        // and as a write probe: if the client closed, the write
-        // returns EPIPE / ECONNRESET and we exit the loop.
-        if w.write_all(b": keep-alive\n\n").is_err() {
-            return;
-        }
-        if w.flush().is_err() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
-
-    let _ = write!(w, "data: ping:{}\n\n", server_version);
-    let _ = w.flush();
+    } else {
+        format!("current:{}", server_version)
+    };
+    let response = tiny_http::Response::from_string(body)
+        .with_header(
+            tiny_http::Header::from_bytes(b"Content-Type", b"text/plain").unwrap(),
+        )
+        .with_header(tiny_http::Header::from_bytes(b"Cache-Control", b"no-store").unwrap())
+        .with_header(tiny_http::Header::from_bytes(b"Connection", b"close").unwrap());
+    let _ = request.respond(response);
 }
 
 fn handle_request(request: tiny_http::Request, output_dir: &Path, inject_reload: bool) {
