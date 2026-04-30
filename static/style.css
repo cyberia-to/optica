@@ -858,7 +858,12 @@ hr {
 }
 
 .sidebar-nav {
-    flex: 1;
+    /* No flex-grow here — if .sidebar-nav grows to fill the column,
+       there's no free space left for .app-launcher's margin-top:
+       auto to consume, and the launcher gets pushed past the
+       viewport bottom (visible on mobile where 100vh is shorter).
+       Letting .sidebar-nav size to its content leaves the slack
+       for the launcher to anchor at the bottom of the sidebar. */
     padding: 0.15rem 0 0.5rem;
 }
 
