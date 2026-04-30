@@ -1047,13 +1047,34 @@
     return { nodes, edges };
   }
 
-  if (window.d3) {
-    loadAndRender();
+  // Defer the 8.7 MB graph-data.json fetch until the user actually
+  // scrolls the minimap into view. Eager-loading on every page hit
+  // forced the browser to revalidate + parse 8.7 MB of JSON on each
+  // navigation; rapid clicks then queued duplicate parses behind one
+  // another and the next click felt stuck.
+  let booted = false;
+  function boot() {
+    if (booted) return;
+    booted = true;
+    if (window.d3) {
+      loadAndRender();
+    } else {
+      const script = document.createElement('script');
+      script.src = 'https://d3js.org/d3.v7.min.js';
+      script.onload = loadAndRender;
+      document.head.appendChild(script);
+    }
+  }
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver(function (entries) {
+      for (const e of entries) {
+        if (e.isIntersecting) { io.disconnect(); boot(); break; }
+      }
+    }, { rootMargin: '200px' });
+    io.observe(container);
   } else {
-    const script = document.createElement('script');
-    script.src = 'https://d3js.org/d3.v7.min.js';
-    script.onload = loadAndRender;
-    document.head.appendChild(script);
+    // Fallback: legacy browsers — load after first idle moment.
+    (window.requestIdleCallback || setTimeout)(boot, 1500);
   }
 
   function renderMinimap(data) {
