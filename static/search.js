@@ -6,11 +6,23 @@
   var searchResults = document.getElementById("search-results");
   if (!searchInput || !searchResults) return;
 
+  // Defer the 3.7 MB search-index.json fetch until the user actually
+  // engages the search box (focus, hover, or first keystroke). The
+  // file is only useful once they start typing; eager-loading on
+  // every page hit forced a revalidation + parse on every nav and
+  // contributed to the "rapid clicks → one stalls" race.
   var searchIndex = null;
-  fetch("/search-index.json")
-    .then(function (r) { return r.json(); })
-    .then(function (data) { searchIndex = data; })
-    .catch(function () {});
+  var indexLoading = false;
+  function loadIndex() {
+    if (searchIndex || indexLoading) return;
+    indexLoading = true;
+    fetch("/search-index.json")
+      .then(function (r) { return r.json(); })
+      .then(function (data) { searchIndex = data; })
+      .catch(function () { indexLoading = false; });
+  }
+  searchInput.addEventListener("focus", loadIndex, { once: true });
+  searchInput.addEventListener("pointerenter", loadIndex, { once: true });
 
   function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
   function escapeHtml(str) {
@@ -174,8 +186,14 @@
     var query = this.value.trim();
     activeIndex = -1;
 
-    if (!query || !searchIndex) {
+    if (!query) {
       searchResults.innerHTML = "";
+      return;
+    }
+    if (!searchIndex) {
+      // Index still loading — kick it off if it hasn't started.
+      loadIndex();
+      searchResults.innerHTML = '<p class="search-empty">loading…</p>';
       return;
     }
 
