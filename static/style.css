@@ -681,6 +681,16 @@ hr {
     width: 10.8rem;
     height: 10.8rem;
 }
+
+/* Shrink the graph orb to a third on narrow viewports — at desktop
+   size it dominates the column nicely, but on mobile it eats most
+   of the screen and obstructs reading. */
+@media (max-width: 768px) {
+    .app-orb--main {
+        width: 3.6rem;
+        height: 3.6rem;
+    }
+}
 .app-orb--main .app-orb-glyph {
     width: 70%;
     height: 70%;
