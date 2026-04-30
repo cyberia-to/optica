@@ -90,8 +90,9 @@ pub fn serve(
                     // Handle regular requests in a thread to keep the main loop responsive.
                     // This prevents serialized request handling from blocking concurrent loads.
                     let dir = output_dir.clone();
+                    let v = build_version.clone();
                     std::thread::spawn(move || {
-                        handle_request(request, &dir, live_reload);
+                        handle_request(request, &dir, live_reload, &v);
                     });
                 }
             }
@@ -140,7 +141,12 @@ fn handle_reload_poll(
     let _ = request.respond(response);
 }
 
-fn handle_request(request: tiny_http::Request, output_dir: &Path, inject_reload: bool) {
+fn handle_request(
+    request: tiny_http::Request,
+    output_dir: &Path,
+    inject_reload: bool,
+    build_version: &AtomicU64,
+) {
     let url_path = request.url().to_string();
     let url_path = url_path.split('?').next().unwrap_or(&url_path);
 
@@ -151,11 +157,15 @@ fn handle_request(request: tiny_http::Request, output_dir: &Path, inject_reload:
         let content_type = guess_content_type(&file_path);
         let mut content = std::fs::read(&file_path).unwrap_or_default();
 
-        // Inject live reload script into HTML
+        // Inject live reload script into HTML — bake the current
+        // build_version into it so the page starts in sync. Without
+        // this, a fresh page begins at knownVersion=0 and gets stuck
+        // in a reload storm whenever the server is past 0.
         if inject_reload && content_type.starts_with("text/html") {
             if let Ok(html) = String::from_utf8(content.clone()) {
+                let v = build_version.load(Ordering::SeqCst);
                 let injected =
-                    html.replace("</body>", &format!("{}\n</body>", reload::RELOAD_SCRIPT));
+                    html.replace("</body>", &format!("{}\n</body>", reload::reload_script(v)));
                 content = injected.into_bytes();
             }
         }

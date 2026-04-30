@@ -14,35 +14,38 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, SystemTime};
 
-pub const RELOAD_SCRIPT: &str = r#"<script>
-// Live-reload via short polling. Previous design used a long-held
-// SSE connection which left server-side sockets in CLOSE_WAIT and
-// browser-side connection slots tied up after every navigation —
-// rapid clicks accumulated stuck connections and the next click
-// stalled until OS/HTTP timeouts kicked in. Polling avoids the
-// whole class of problem: each request is a sub-millisecond
-// round-trip with no long-held state on either side.
-(function() {
-  let knownVersion = 0;
-  function tick() {
-    fetch('/__reload?v=' + knownVersion, { cache: 'no-store' })
-      .then(function (r) { return r.text(); })
-      .then(function (body) {
+/// Reload script with the server's current build version baked in.
+/// Without this, a freshly-loaded page starts at knownVersion = 0;
+/// if the server has already incremented past 0 (any rebuild during
+/// the session), the next poll sees server > client, the client
+/// reloads, the new page again starts at 0, and the loop repeats —
+/// a tight reload-storm we can't recover from.
+pub fn reload_script(current_version: u64) -> String {
+    format!(
+        r#"<script>
+(function() {{
+  let knownVersion = {current_version};
+  function tick() {{
+    fetch('/__reload?v=' + knownVersion, {{ cache: 'no-store' }})
+      .then(function (r) {{ return r.text(); }})
+      .then(function (body) {{
         const parts = body.trim().split(':');
         const action = parts[0];
         const v = parts.length > 1 ? parseInt(parts[1]) || 0 : 0;
-        if (action === 'reload') {
+        if (action === 'reload') {{
           window.location.reload();
           return;
-        }
+        }}
         if (v > 0) knownVersion = v;
         setTimeout(tick, 1500);
-      })
-      .catch(function () { setTimeout(tick, 5000); });
-  }
+      }})
+      .catch(function () {{ setTimeout(tick, 5000); }});
+  }}
   tick();
-})();
-</script>"#;
+}})();
+</script>"#
+    )
+}
 
 /// Cached state for incremental rebuilds.
 struct BuildCache {
