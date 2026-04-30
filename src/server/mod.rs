@@ -143,36 +143,52 @@ fn handle_sse_reload(
         }
     }
 
-    // Short-poll: hold the SSE response for at most 25s, then send a
-    // ping and let the client reconnect. Long holds (5 min) keep
-    // every browser tab in a "still loading" state — the network
-    // tab shows /__reload as pending, and some browsers extend the
-    // page loading indicator to match. 25s is short enough to feel
-    // settled, long enough to avoid reconnect storms.
-    let start = Instant::now();
-    while running.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(25) {
-        if version.load(Ordering::SeqCst) != server_version {
-            let new_version = version.load(Ordering::SeqCst);
-            let body = format!("data: reload:{}\n\n", new_version);
-            let response = tiny_http::Response::from_string(body)
-                .with_header(
-                    tiny_http::Header::from_bytes(b"Content-Type", b"text/event-stream").unwrap(),
-                )
-                .with_header(tiny_http::Header::from_bytes(b"Cache-Control", b"no-cache").unwrap())
-                .with_header(tiny_http::Header::from_bytes(b"Connection", b"close").unwrap());
-            let _ = request.respond(response);
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(200));
+    // Stream the SSE response through the raw socket so we can
+    // detect client disconnect immediately. Previous version held
+    // the connection in a sleep loop for 25s with no I/O — when
+    // the browser closed the EventSource on navigation, the server
+    // socket lingered in CLOSE_WAIT for the full 25s. Rapid clicks
+    // accumulated zombie connections and the next navigation stalled
+    // waiting for an HTTP/1.1 connection slot to free up.
+    //
+    // Now: write the response headers, then a keep-alive comment
+    // every 500ms. A write failure (broken pipe / connection reset)
+    // means the client navigated away — exit the loop, drop the
+    // socket. Slot frees within 500ms instead of 25s.
+    use std::io::Write;
+    let mut w = request.into_writer();
+    let head = b"HTTP/1.1 200 OK\r\n\
+Content-Type: text/event-stream\r\n\
+Cache-Control: no-cache\r\n\
+Connection: close\r\n\
+X-Accel-Buffering: no\r\n\
+\r\n";
+    if w.write_all(head).is_err() || w.flush().is_err() {
+        return;
     }
 
-    // Timeout keep-alive
-    let body = format!("data: ping:{}\n\n", server_version);
-    let response = tiny_http::Response::from_string(body)
-        .with_header(tiny_http::Header::from_bytes(b"Content-Type", b"text/event-stream").unwrap())
-        .with_header(tiny_http::Header::from_bytes(b"Cache-Control", b"no-cache").unwrap())
-        .with_header(tiny_http::Header::from_bytes(b"Connection", b"close").unwrap());
-    let _ = request.respond(response);
+    let start = Instant::now();
+    while running.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(15) {
+        let current = version.load(Ordering::SeqCst);
+        if current != server_version {
+            let _ = write!(w, "data: reload:{}\n\n", current);
+            let _ = w.flush();
+            return;
+        }
+        // SSE comment line (starts with `:`). Doubles as keep-alive
+        // and as a write probe: if the client closed, the write
+        // returns EPIPE / ECONNRESET and we exit the loop.
+        if w.write_all(b": keep-alive\n\n").is_err() {
+            return;
+        }
+        if w.flush().is_err() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    let _ = write!(w, "data: ping:{}\n\n", server_version);
+    let _ = w.flush();
 }
 
 fn handle_request(request: tiny_http::Request, output_dir: &Path, inject_reload: bool) {
