@@ -4,43 +4,24 @@
  */
 
 /* ============================================================
-   PAGE TRANSITIONS — cross-document View Transitions API.
-   Pure CSS opt-in. Browser crossfades the old document into the
-   new one on every navigation, no JS click interception (the
-   older same-document API had click-drop bugs). Falls back to
-   instant navigation on browsers that don't support it.
+   PAGE TRANSITIONS — entrance fade on the article only.
+   Animates .main-content from opacity 0 to 1 on every page load.
+   Sidebar and corner chrome stay still (no visual jolt on
+   identity badge / contribute fab / clock). No JS click
+   interception; the old page paints normally until the browser
+   commits navigation, then the new page's article fades in.
    ============================================================ */
-@view-transition {
-    navigation: auto;
+.main-content {
+    animation: page-content-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-::view-transition-old(root),
-::view-transition-new(root) {
-    animation-duration: 220ms;
-    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+@keyframes page-content-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
 }
 
-::view-transition-old(root) {
-    animation-name: ct-fade-out;
-}
-::view-transition-new(root) {
-    animation-name: ct-fade-in;
-}
-
-@keyframes ct-fade-out {
-    to { opacity: 0; }
-}
-@keyframes ct-fade-in {
-    from { opacity: 0; transform: translateY(4px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-/* Respect the user's OS-level reduced-motion setting. */
 @media (prefers-reduced-motion: reduce) {
-    ::view-transition-old(root),
-    ::view-transition-new(root) {
-        animation-duration: 0ms;
-    }
+    .main-content { animation: none; }
 }
 
 /* ============================================================
