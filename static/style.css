@@ -805,17 +805,17 @@ hr {
     .contribute-fab-name { display: none; }
 }
 
-/* Lunar machine time — fixed bottom-right, two-line readout.
-   Date (year · moon · day-of-moon) above, UTC time below.
-   Clickable: links to /mt (Machine Time spec). */
+/* Lunar machine time — fixed bottom-right, single line.
+   Date (year · moon · day-of-moon) on the left, UTC time on the
+   right. Clickable: links to /mt (Machine Time spec). */
 .lmt-clock {
     position: fixed;
     bottom: 1rem;
     right: 1.25rem;
     z-index: 25;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.65rem;
     font-family: var(--font-mono, monospace);
     line-height: 1;
     color: var(--color-primary);
@@ -831,17 +831,14 @@ hr {
 }
 
 .lmt-clock-date {
-    display: block;
-    font-size: 1.05rem;
+    font-size: 1.1rem;
     font-weight: 600;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.08em;
     opacity: 0.7;
-    margin-bottom: 0.25rem;
 }
 
 .lmt-clock-time {
-    display: block;
-    font-size: 2.1rem;
+    font-size: 1.6rem;
     font-weight: 700;
     letter-spacing: 0.04em;
 }
