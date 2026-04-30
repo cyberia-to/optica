@@ -212,19 +212,24 @@
             );
         </script>
         <script>
-            // Intent-debounced link prefetch. Hover for >120ms warms
-            // the cache so the click lands on a response that's
-            // already on its way. We DON'T cancel an in-flight
-            // prefetch on click: removing the <link rel=prefetch>
-            // mid-flight made the browser confuse the aborted load
-            // with the click's navigation, breaking heavy pages like
-            // /graph (whose 8MB graph-data.js gets pre-fetched too).
-            // The original click-drop bug we were guarding against
-            // turned out to be View Transitions, not the prefetch.
+            // Hover-prefetch with strict at-most-one in-flight policy.
+            // Why: rapid-fire navigation (clicking sidebar items in
+            // quick succession) was getting the 3rd or 4th click
+            // stuck while the browser waited for in-flight prefetches
+            // to clear an HTTP/1.1 connection slot (tiny-http dev
+            // server has a 6-conn-per-origin cap). Keep only ONE
+            // <link rel=prefetch> in the document at a time, and
+            // remove it the moment a click commits — the browser
+            // releases the connection so the navigation has a slot.
+            //
+            // 250ms hover debounce (up from 120ms): casual mouse-overs
+            // during rapid clicking no longer fire prefetches at all,
+            // because the click happens before the timer.
             (function () {
                 var seen = Object.create(null);
-                var pending = null;
-                var DELAY = 120;
+                var pending = null;        // {href, timer} for the queued prefetch
+                var inflightLink = null;   // the active <link rel=prefetch>, if any
+                var DELAY = 250;
                 function shouldPrefetch(a) {
                     if (!a || !a.href) return null;
                     if (a.target === "_blank" || a.hasAttribute("download")) return null;
@@ -234,25 +239,28 @@
                         if (u.pathname === location.pathname) return null;
                         // Heavy pages embed multi-megabyte inline data
                         // (/graph and /tags ship the full graph;
-                        // /files lists 22k rows). Pre-fetching these
-                        // while hovering tangles up with the click
-                        // navigation and leaves the link stuck on
-                        // the first click — second click "works"
-                        // because the prefetch is now complete and
-                        // the browser uses the cache cleanly.
+                        // /files lists 22k rows). Skip those entirely.
                         if (/^\/(graph|tags|files)\/?$/.test(u.pathname)) return null;
                         return u.href;
                     } catch (err) {
                         return null;
                     }
                 }
+                function abortInflight() {
+                    if (inflightLink && inflightLink.parentNode) {
+                        inflightLink.parentNode.removeChild(inflightLink);
+                    }
+                    inflightLink = null;
+                }
                 function startPrefetch(href) {
                     if (seen[href]) return;
+                    abortInflight();
                     seen[href] = true;
                     var link = document.createElement("link");
                     link.rel = "prefetch";
                     link.href = href;
                     document.head.appendChild(link);
+                    inflightLink = link;
                 }
                 function cancelPending() {
                     if (pending) {
@@ -280,6 +288,17 @@
                     if (pending && pending.href && !a.href.endsWith(pending.href)) return;
                     cancelPending();
                 }, { passive: true });
+                // On click commit: drop the pending timer AND yank
+                // any in-flight prefetch <link>. The browser releases
+                // the HTTP connection so navigation has a fresh slot
+                // — preventing the "rapid clicks → one stalls" race.
+                document.addEventListener("click", function (e) {
+                    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                    var a = e.target.closest && e.target.closest("a[href]");
+                    if (!a) return;
+                    cancelPending();
+                    abortInflight();
+                }, true);
             })();
         </script>
     </body>
