@@ -4,6 +4,46 @@
  */
 
 /* ============================================================
+   PAGE TRANSITIONS — cross-document View Transitions API.
+   Pure CSS opt-in. Browser crossfades the old document into the
+   new one on every navigation, no JS click interception (the
+   older same-document API had click-drop bugs). Falls back to
+   instant navigation on browsers that don't support it.
+   ============================================================ */
+@view-transition {
+    navigation: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+    animation-duration: 220ms;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+::view-transition-old(root) {
+    animation-name: ct-fade-out;
+}
+::view-transition-new(root) {
+    animation-name: ct-fade-in;
+}
+
+@keyframes ct-fade-out {
+    to { opacity: 0; }
+}
+@keyframes ct-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Respect the user's OS-level reduced-motion setting. */
+@media (prefers-reduced-motion: reduce) {
+    ::view-transition-old(root),
+    ::view-transition-new(root) {
+        animation-duration: 0ms;
+    }
+}
+
+/* ============================================================
    FONTS (self-hosted)
    ============================================================ */
 /* latin-ext */
