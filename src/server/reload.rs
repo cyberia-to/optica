@@ -202,11 +202,36 @@ fn watch_and_rebuild_loop(
             &root_parsed,
             &config.build.input_dir,
         );
+        // Canonicalise the workspace root and the build output dir
+        // so we can compare paths reliably. Without this, watching
+        // the root subgraph (when its repo IS the workspace) creates
+        // a feedback loop: every build writes to <root>/build, the
+        // watcher fires events for those writes, and rebuild kicks
+        // off again. Path-string filters miss directory-level events
+        // (Foo macOS sends events for /…/cyber, not /…/cyber/build/).
+        let workspace_root = config.build.input_dir.canonicalize()
+            .unwrap_or_else(|_| config.build.input_dir.clone());
+        let output_dir = config.build.output_dir.canonicalize()
+            .unwrap_or_else(|_| config.build.output_dir.clone());
         for decl in &subgraph_decls {
-            if decl.repo_path.exists() {
-                eprintln!("  {} Watching subgraph '{}': {}", "Watch".dimmed(), decl.name, decl.repo_path.display());
-                watcher.watch(&decl.repo_path, notify::RecursiveMode::Recursive)?;
+            if !decl.repo_path.exists() { continue; }
+            let canon = decl.repo_path.canonicalize()
+                .unwrap_or_else(|_| decl.repo_path.clone());
+            // Skip the root subgraph — it's already covered by the
+            // graph_dir watch and its output_dir would feed back.
+            if canon == workspace_root {
+                eprintln!("  {} Skip subgraph '{}': workspace root (already watched via graph_dir)", "Watch".dimmed(), decl.name);
+                continue;
             }
+            // Skip any subgraph whose repo path contains or equals
+            // the output dir (defensive, in case someone configures
+            // an output dir inside a subgraph).
+            if canon.starts_with(&output_dir) || output_dir.starts_with(&canon) {
+                eprintln!("  {} Skip subgraph '{}': overlaps output dir", "Watch".dimmed(), decl.name);
+                continue;
+            }
+            eprintln!("  {} Watching subgraph '{}': {}", "Watch".dimmed(), decl.name, decl.repo_path.display());
+            watcher.watch(&decl.repo_path, notify::RecursiveMode::Recursive)?;
         }
     }
 
