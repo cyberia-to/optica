@@ -862,24 +862,40 @@ fn incremental_rebuild(
         }
 
         // Mark a namespace parent dirty whenever its children set differs
-        // from last build — covers both "page added/removed" and "page moved
-        // in or out". Previous logic only flagged dirty when a current child
-        // had been re-parsed, so a page moving OUT (no longer current) left
-        // the parent's stale folder listing in build/.
+        // from last build — covers add, remove, move-in, move-out. Also
+        // propagate to ancestors: render/context.rs builds a parent's
+        // folder listing by iterating ALL namespace_tree keys with the
+        // page name as prefix, so adding a deep sub-namespace (e.g.
+        // `cyber valley/cve/team`) changes the folder listing on
+        // `cyber valley/cve` AND `cyber valley`, even when neither page's
+        // direct children set changed.
         let new_namespace_children: HashMap<String, HashSet<PageId>> = store
             .namespace_tree
             .iter()
             .map(|(k, v)| (k.clone(), v.iter().cloned().collect()))
             .collect();
+        let mark_with_ancestors = |dirty: &mut HashSet<PageId>, ns: &str| {
+            dirty.insert(ns.to_string());
+            let mut cur = ns;
+            while let Some((parent, _)) = cur.rsplit_once('/') {
+                dirty.insert(parent.to_string());
+                cur = parent;
+            }
+        };
         for (ns_key, new_set) in &new_namespace_children {
             let old_set = old_namespace_children.get(ns_key);
-            if old_set.map(|s| s != new_set).unwrap_or(true) {
+            let key_changed = old_set.map(|s| s != new_set).unwrap_or(true);
+            let key_is_new = old_set.is_none();
+            if key_changed {
                 dirty_ids.insert(ns_key.clone());
+            }
+            if key_is_new {
+                mark_with_ancestors(&mut dirty_ids, ns_key);
             }
         }
         for old_key in old_namespace_children.keys() {
             if !new_namespace_children.contains_key(old_key) {
-                dirty_ids.insert(old_key.clone());
+                mark_with_ancestors(&mut dirty_ids, old_key);
             }
         }
         cache.last_namespace_children = new_namespace_children;
