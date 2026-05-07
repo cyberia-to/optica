@@ -76,7 +76,7 @@ content %}
     <nav class="page-tabs" aria-label="Page sections">
         {% if has_folder %}<a class="page-tab" data-target="folder" href="#folder">Folder</a>{% endif %}
         {% if has_synonyms %}<a class="page-tab" data-target="synonyms" href="#synonyms">Synonyms</a>{% endif %}
-        {% if has_neighbours %}<a class="page-tab" data-target="neighbours" href="#neighbours">Neighbours</a>{% endif %}
+        {% if has_neighbours %}<a class="page-tab" data-target="neighbours" href="#neighbours">Graph</a>{% endif %}
         {% if has_mentions %}<a class="page-tab" data-target="mentions" href="#mentions">Mentions</a>{% endif %}
     </nav>
     {% endif %}
@@ -114,7 +114,7 @@ content %}
 
     {% if graph.show_minimap %}
     <section id="neighbours" class="page-minimap">
-        <h2>Neighbours</h2>
+        <h2>Graph</h2>
         <div
             id="minimap-container"
             data-page-id="{{ page.id }}"
