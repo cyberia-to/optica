@@ -1584,15 +1584,17 @@ hr {
     border: none;
 }
 
-/* "Contents" inherits the standard h3 typography — same weight,
+/* "Contents" inherits the standard h2 typography — same weight,
    size, color, line-height as any other section heading. */
-.toc h3 {
+.toc h2 {
     margin: 0 0 0.6rem;
 }
 
+/* padding-left = bullet inset so the depth=1 dot sits inside the
+   column instead of overflowing to the left of the page gutter. */
 .toc ul {
     margin: 0;
-    padding-left: 0;
+    padding-left: 0.7rem;
     list-style: none;
 }
 
