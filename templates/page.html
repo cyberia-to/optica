@@ -75,7 +75,7 @@ content %}
     {% if has_folder or has_synonyms or has_neighbours or has_mentions %}
     <nav class="page-tabs" aria-label="Page sections">
         {% if has_folder %}<a class="page-tab" data-target="folder" href="#folder">Folder</a>{% endif %}
-        {% if has_synonyms %}<a class="page-tab" data-target="synonyms" href="#synonyms">Synonyms</a>{% endif %}
+        {% if has_synonyms %}<a class="page-tab" data-target="synonyms" href="#synonyms">Homonyms</a>{% endif %}
         {% if has_neighbours %}<a class="page-tab" data-target="neighbours" href="#neighbours">Graph</a>{% endif %}
         {% if has_mentions %}<a class="page-tab" data-target="mentions" href="#mentions">Mentions</a>{% endif %}
     </nav>
@@ -98,7 +98,7 @@ content %}
 
     {% if dimensional_peers %}
     <section id="synonyms" class="dimensional-peers">
-        <h2>Synonyms</h2>
+        <h2>Homonyms</h2>
         {% for peer in dimensional_peers %}
         <details class="dimension">
             <summary class="dimension-path">
