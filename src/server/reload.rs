@@ -874,11 +874,14 @@ fn incremental_rebuild(
             .iter()
             .map(|(k, v)| (k.clone(), v.iter().cloned().collect()))
             .collect();
+        // Namespace keys are raw (e.g. "cyber valley/cve") but page ids are
+        // slugified ("cyber-valley/cve"). Dirty marks must use slugified
+        // form to match PageId entries in the render cache.
         let mark_with_ancestors = |dirty: &mut HashSet<PageId>, ns: &str| {
-            dirty.insert(ns.to_string());
+            dirty.insert(crate::parser::slugify_page_name(ns));
             let mut cur = ns;
             while let Some((parent, _)) = cur.rsplit_once('/') {
-                dirty.insert(parent.to_string());
+                dirty.insert(crate::parser::slugify_page_name(parent));
                 cur = parent;
             }
         };
@@ -887,7 +890,7 @@ fn incremental_rebuild(
             let key_changed = old_set.map(|s| s != new_set).unwrap_or(true);
             let key_is_new = old_set.is_none();
             if key_changed {
-                dirty_ids.insert(ns_key.clone());
+                dirty_ids.insert(crate::parser::slugify_page_name(ns_key));
             }
             if key_is_new {
                 mark_with_ancestors(&mut dirty_ids, ns_key);
