@@ -67,8 +67,12 @@ struct BuildCache {
     backlink_snapshots: HashMap<PageId, Vec<PageId>>,
     /// Content page IDs from the last build (excludes stubs) — detect structural changes
     last_content_page_ids: HashSet<PageId>,
-    /// Namespace tree keys from last build — detect namespace parent changes
-    last_namespace_keys: HashSet<String>,
+    /// Namespace tree children-sets from last build. Mapping namespace_key →
+    /// set of page ids that were children of that namespace last time.
+    /// Detect namespace parent changes by set-difference, so a parent is
+    /// marked dirty when a child moves IN or OUT, not only when a current
+    /// child re-parses.
+    last_namespace_children: HashMap<String, HashSet<PageId>>,
     /// Whether the initial full build has completed
     initialized: bool,
     /// Cached subgraph parsed pages (rebuilt only when a subgraph file changes)
@@ -94,7 +98,7 @@ impl BuildCache {
             link_hashes: HashMap::new(),
             backlink_snapshots: HashMap::new(),
             last_content_page_ids: HashSet::new(),
-            last_namespace_keys: HashSet::new(),
+            last_namespace_children: HashMap::new(),
             initialized: false,
             subgraph_pages: Vec::new(),
             subgraph_repo_paths: Vec::new(),
@@ -346,8 +350,12 @@ fn watch_and_rebuild_loop(
                 sorted.sort();
                 cache.backlink_snapshots.insert(page_id.clone(), sorted);
             }
-            // Snapshot namespace tree keys
-            cache.last_namespace_keys = store.namespace_tree.keys().cloned().collect();
+            // Snapshot namespace tree children-sets
+            cache.last_namespace_children = store
+                .namespace_tree
+                .iter()
+                .map(|(k, v)| (k.clone(), v.iter().cloned().collect()))
+                .collect();
             // Cache the store so fast path can reuse it
             cache.cached_store = Some(store);
         }
@@ -818,7 +826,7 @@ fn incremental_rebuild(
     // Step 4: Build or reuse graph store.
     // Full graph build (PageRank, gravity, etc.) is expensive — only do it for structural changes.
     if structural_change || cache.cached_store.is_none() {
-        let old_namespace_keys = cache.last_namespace_keys.clone();
+        let old_namespace_children = cache.last_namespace_children.clone();
         let mut store = crate::graph::build_graph(all_parsed)?;
         store.subgraph_private = cache.private_subgraph_names.clone();
         cache.last_content_page_ids = content_page_ids.clone();
@@ -846,34 +854,28 @@ fn incremental_rebuild(
             cache.backlink_snapshots.remove(page_id);
         }
 
-        // Fix 3: Mark namespace parents dirty only when their child list changed.
-        // Previously this marked ALL namespace parents dirty on any structural
-        // change, causing 200+ unnecessary re-renders for a single new file.
-        let new_namespace_keys: HashSet<String> = store.namespace_tree.keys().cloned().collect();
-        for ns_key in &new_namespace_keys {
-            if !old_namespace_keys.contains(ns_key) {
-                // New namespace parent — must render
+        // Mark a namespace parent dirty whenever its children set differs
+        // from last build — covers both "page added/removed" and "page moved
+        // in or out". Previous logic only flagged dirty when a current child
+        // had been re-parsed, so a page moving OUT (no longer current) left
+        // the parent's stale folder listing in build/.
+        let new_namespace_children: HashMap<String, HashSet<PageId>> = store
+            .namespace_tree
+            .iter()
+            .map(|(k, v)| (k.clone(), v.iter().cloned().collect()))
+            .collect();
+        for (ns_key, new_set) in &new_namespace_children {
+            let old_set = old_namespace_children.get(ns_key);
+            if old_set.map(|s| s != new_set).unwrap_or(true) {
                 dirty_ids.insert(ns_key.clone());
-            } else {
-                // Existing namespace — check if children changed
-                let new_children = store.namespace_tree.get(ns_key);
-                // Children may have been added/removed; mark dirty if set differs
-                // (We only have old keys, not old children — so any namespace whose
-                // key existed before is only dirty if a changed page lives in it.)
-                if changed_page_ids.iter().any(|cid| {
-                    new_children.map(|ch| ch.contains(cid)).unwrap_or(false)
-                }) {
-                    dirty_ids.insert(ns_key.clone());
-                }
             }
         }
-        // Mark parents of removed namespaces dirty
-        for old_key in &old_namespace_keys {
-            if !new_namespace_keys.contains(old_key) {
+        for old_key in old_namespace_children.keys() {
+            if !new_namespace_children.contains_key(old_key) {
                 dirty_ids.insert(old_key.clone());
             }
         }
-        cache.last_namespace_keys = new_namespace_keys;
+        cache.last_namespace_children = new_namespace_children;
 
         for (page_id, page) in &store.pages {
             if !cache.content_hashes.contains_key(page_id) {
