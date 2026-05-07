@@ -444,56 +444,6 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
             let sg_file_pages = optica::parser::parse_all(&sg_discovered)?;
             parsed_pages.extend(sg_file_pages);
 
-            // Generate directory index pages for subdirectories without README
-            let existing_ids: std::collections::HashSet<String> = parsed_pages
-                .iter()
-                .map(|p| p.id.clone())
-                .collect();
-            let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
-            for page in parsed_pages.iter() {
-                if let Some(ref ns) = page.namespace {
-                    if ns.starts_with(&decl.name) {
-                        // Collect each directory level between subgraph root and this page
-                        let after_root = ns.strip_prefix(&format!("{}/", decl.name)).unwrap_or("");
-                        let mut accumulated = decl.name.clone();
-                        for segment in after_root.split('/').filter(|s| !s.is_empty()) {
-                            accumulated = format!("{}/{}", accumulated, segment);
-                            seen_dirs.insert(accumulated.clone());
-                        }
-                    }
-                }
-            }
-            for dir_name in &seen_dirs {
-                let dir_slug = optica::parser::slugify_page_name(dir_name);
-                if !existing_ids.contains(&dir_slug) {
-                    let short_name = dir_name.rsplit('/').next().unwrap_or(dir_name);
-                    parsed_pages.push(optica::parser::ParsedPage {
-                        id: dir_slug,
-                        meta: optica::parser::PageMeta {
-                            title: dir_name.clone(),
-                            properties: std::collections::HashMap::new(),
-                            tags: vec![],
-                            public: Some(true),
-                            aliases: vec![],
-                            date: None,
-                            icon: None,
-                            menu_order: None,
-                            stake: None,
-                        },
-                        kind: optica::parser::PageKind::Page,
-                        source_path: std::path::PathBuf::new(),
-                        namespace: {
-                            // Parent namespace: "trident/docs" → "trident"
-                            let parent = dir_name.rsplitn(2, '/').nth(1).unwrap_or(&decl.name);
-                            Some(parent.to_string())
-                        },
-                        subgraph: Some(decl.name.clone()),
-                        content_md: format!("# {}\n", short_name),
-                        outgoing_links: vec![],
-                    });
-                }
-            }
-
             if !quiet {
                 println!(
                     "  {} Subgraph '{}': {} pages, {} files",
@@ -506,11 +456,23 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
         }
     }
 
+    // Synthesize an index page for every namespace dir lacking one — covers
+    // both root-graph and subgraph dirs in a single pass. Prevents the
+    // "folder link in sidebar → 404 on click" failure mode.
+    let subgraph_names: Vec<String> = subgraph_decls.iter().map(|d| d.name.clone()).collect();
+    optica::parser::synthesize_dir_indexes(&mut parsed_pages, &subgraph_names);
+
     // Rewrite `../media/<name>` references to gateway IPFS URLs using the
-    // cache map, if provided. Keeps markdown source portable while letting
-    // every build target (CI, local dev) resolve identically.
-    if let Some(ref map_path) = config.media.ipfs_map {
-        let count = apply_ipfs_rewrites(&mut parsed_pages, map_path, &config.media.ipfs_gateway)?;
+    // cache map. Keeps markdown source portable while letting every build
+    // target (CI, local dev) resolve identically. Falls back to
+    // `<input_dir>/ipfs-cache.json` when no explicit map is provided, so a
+    // bare `optica serve <dir>` resolves images the same as a CI build.
+    let resolved_map = config.media.ipfs_map.clone().or_else(|| {
+        let default = config.build.input_dir.join("ipfs-cache.json");
+        default.exists().then_some(default)
+    });
+    if let Some(map_path) = resolved_map {
+        let count = apply_ipfs_rewrites(&mut parsed_pages, &map_path, &config.media.ipfs_gateway)?;
         if !quiet {
             println!(
                 "  {} Rewrote {} media ref{} via {}",

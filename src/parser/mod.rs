@@ -87,6 +87,62 @@ pub fn slugify_page_name(name: &str) -> PageId {
     slug
 }
 
+/// For every namespace dir referenced by a page, ensure an index page exists
+/// at that slug. Without this, optica's parent-page rendering emits folder
+/// links into its sidebar (any subdir with content shows up) but the linked
+/// URL 404s — there's no page to render. Synthesizes a minimal `# <dir>`
+/// stub for any missing index, attributing it to the owning subgraph (if
+/// any) so render-time grouping stays correct.
+pub fn synthesize_dir_indexes(pages: &mut Vec<ParsedPage>, subgraph_names: &[String]) {
+    let existing_ids: std::collections::HashSet<String> =
+        pages.iter().map(|p| p.id.clone()).collect();
+    let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for page in pages.iter() {
+        if let Some(ref ns) = page.namespace {
+            let mut accumulated = String::new();
+            for segment in ns.split('/').filter(|s| !s.is_empty()) {
+                if accumulated.is_empty() {
+                    accumulated = segment.to_string();
+                } else {
+                    accumulated = format!("{}/{}", accumulated, segment);
+                }
+                seen_dirs.insert(accumulated.clone());
+            }
+        }
+    }
+    for dir_name in &seen_dirs {
+        let dir_slug = slugify_page_name(dir_name);
+        if existing_ids.contains(&dir_slug) {
+            continue;
+        }
+        let short_name = dir_name.rsplit('/').next().unwrap_or(dir_name);
+        let owning_subgraph = subgraph_names
+            .iter()
+            .find(|sg| dir_name == *sg || dir_name.starts_with(&format!("{}/", sg)))
+            .cloned();
+        pages.push(ParsedPage {
+            id: dir_slug,
+            meta: PageMeta {
+                title: dir_name.clone(),
+                properties: std::collections::HashMap::new(),
+                tags: vec![],
+                public: Some(true),
+                aliases: vec![],
+                date: None,
+                icon: None,
+                menu_order: None,
+                stake: None,
+            },
+            kind: PageKind::Page,
+            source_path: std::path::PathBuf::new(),
+            namespace: dir_name.rsplitn(2, '/').nth(1).map(|s| s.to_string()),
+            subgraph: owning_subgraph,
+            content_md: format!("# {}\n", short_name),
+            outgoing_links: vec![],
+        });
+    }
+}
+
 pub fn parse_all(discovered: &DiscoveredFiles) -> Result<Vec<ParsedPage>> {
     let mut pages = Vec::new();
 
