@@ -751,6 +751,13 @@ fn incremental_rebuild(
     let subgraph_names: Vec<String> = subgraph_decls.iter().map(|d| d.name.clone()).collect();
     crate::parser::synthesize_dir_indexes(&mut all_parsed, &subgraph_names);
 
+    // Re-apply IPFS map rewrites on every reload. Without this, any page
+    // re-parsed during live-reload reverts to the raw `../media/<file>`
+    // markdown path and renders a broken image (this only ran in the
+    // initial build_site call, so any incremental rebuild silently
+    // regressed images on re-rendered pages).
+    crate::parser::apply_ipfs_rewrites_for_config(&mut all_parsed, config)?;
+
     // Step 3: Detect content, meta, and link changes BEFORE building graph (cheap hash comparison).
     let mut dirty_ids: HashSet<PageId> = HashSet::new();
     let mut content_page_ids: HashSet<PageId> = HashSet::new();

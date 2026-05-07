@@ -87,6 +87,67 @@ pub fn slugify_page_name(name: &str) -> PageId {
     slug
 }
 
+/// Rewrite `../media/<filename>` references in every page's content_md to
+/// `<gateway>/ipfs/<cid>` using a filename→CID map loaded from `map_path`.
+/// Falls through unknown filenames untouched. Returns the number of refs
+/// rewritten across all pages.
+///
+/// Must run on every (re)parse — both initial build and live-reload — or
+/// re-rendered pages revert to the raw markdown path and images break.
+pub fn apply_ipfs_rewrites(
+    pages: &mut [ParsedPage],
+    map_path: &std::path::Path,
+    gateway: &str,
+) -> anyhow::Result<usize> {
+    let raw = std::fs::read_to_string(map_path)
+        .map_err(|e| anyhow::anyhow!("reading ipfs map {}: {}", map_path.display(), e))?;
+    let map: std::collections::HashMap<String, String> = serde_json::from_str(&raw)
+        .map_err(|e| anyhow::anyhow!("parsing ipfs map {}: {}", map_path.display(), e))?;
+    let gateway = gateway.trim_end_matches('/');
+    let re = regex::Regex::new(r#"\.\./media/([^\s\)"'\]<>]+)"#).unwrap();
+    let mut rewrites = 0usize;
+    for page in pages.iter_mut() {
+        let rewritten = re
+            .replace_all(&page.content_md, |caps: &regex::Captures| {
+                match map.get(&caps[1]) {
+                    Some(cid) => {
+                        rewrites += 1;
+                        format!("{}/ipfs/{}", gateway, cid)
+                    }
+                    None => caps[0].to_string(),
+                }
+            })
+            .to_string();
+        if rewritten != page.content_md {
+            page.content_md = rewritten;
+        }
+    }
+    Ok(rewrites)
+}
+
+/// Resolve which IPFS map path to use: explicit `config.media.ipfs_map` if
+/// set, else `<input_dir>/ipfs-cache.json` if it exists, else None.
+pub fn resolve_ipfs_map(config: &crate::config::SiteConfig) -> Option<std::path::PathBuf> {
+    config.media.ipfs_map.clone().or_else(|| {
+        let default = config.build.input_dir.join("ipfs-cache.json");
+        default.exists().then_some(default)
+    })
+}
+
+/// One-stop call: resolve the map and apply rewrites to all pages. Returns
+/// `(count, map_path)` so callers can log; `count = 0` and `map_path = None`
+/// when no map is configured.
+pub fn apply_ipfs_rewrites_for_config(
+    pages: &mut [ParsedPage],
+    config: &crate::config::SiteConfig,
+) -> anyhow::Result<(usize, Option<std::path::PathBuf>)> {
+    let Some(map_path) = resolve_ipfs_map(config) else {
+        return Ok((0, None));
+    };
+    let count = apply_ipfs_rewrites(pages, &map_path, &config.media.ipfs_gateway)?;
+    Ok((count, Some(map_path)))
+}
+
 /// For every namespace dir referenced by a page, ensure an index page exists
 /// at that slug. Without this, optica's parent-page rendering emits folder
 /// links into its sidebar (any subdir with content shows up) but the linked
