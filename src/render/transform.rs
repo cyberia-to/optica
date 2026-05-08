@@ -144,8 +144,9 @@ fn extract_math_blocks(markdown: &str) -> (String, Vec<String>) {
         else if chars[i] == '$' && (i == 0 || chars[i - 1] != '\\') {
             let start = i;
             i += 1;
-            // Skip if immediately followed by space (not math)
-            if i < len && chars[i] != ' ' && chars[i] != '$' {
+            // Skip if immediately followed by space, another $, or a digit
+            // (currency: $7, $15, $25 etc. are not math).
+            if i < len && chars[i] != ' ' && chars[i] != '$' && !chars[i].is_ascii_digit() {
                 let mut found = false;
                 while i < len {
                     if chars[i] == '$' && (i == 0 || chars[i - 1] != '\\') {
