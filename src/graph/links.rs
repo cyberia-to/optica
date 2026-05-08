@@ -3,7 +3,7 @@
 // crystal-type: source
 // crystal-domain: comp
 // ---
-use crate::parser::slugify_page_name;
+use crate::parser::{slugify_page_name, PageId};
 use std::collections::HashMap;
 
 use super::PageStore;
@@ -102,35 +102,63 @@ pub fn build_link_indices(store: &mut PageStore) -> HashMap<String, String> {
 ///   2. Alias match
 ///   3. Namespace-qualified: slugify(namespace/name) — only if source has namespace
 ///   4. Subgraph-qualified: slugify(subgraph/name) — only if source has subgraph
-///   5. Unresolved → return slug as-is (will become stub)
-fn resolve_link(
+///   5. Source-id-prefixed: walk up the source's id one segment at a time and
+///      try `<prefix>/<name>` — covers namespace-parent pages linking to their
+///      children (e.g. `cyb.land.md` linking `[[visit]]` resolves to
+///      `cyb.land/visit`).
+///   6. Basename match: any page id ending with `/name` — fallback for
+///      cross-namespace short-form links. Prefer the candidate sharing the
+///      longest path prefix with the source.
+///   7. Unresolved → return slug as-is (will become stub)
+pub fn resolve_link(
     name: &str,
     source_namespace: Option<&str>,
     source_subgraph: Option<&str>,
     store: &PageStore,
 ) -> String {
     let target_slug = slugify_page_name(name);
+    let suffix = format!("/{}", target_slug);
+    let source_prefix = source_namespace
+        .map(slugify_page_name)
+        .unwrap_or_default();
 
-    // 1. Direct page match
-    if store.pages.contains_key(&target_slug) {
-        return target_slug;
-    }
+    // Score-by-shared-prefix lambda: candidates from any source (basename
+    // matches OR alias targets) compete on how close they sit to the source.
+    let score_for = |id: &str| -> usize {
+        let shared = id
+            .split('/')
+            .zip(source_prefix.split('/'))
+            .take_while(|(a, b)| a == b)
+            .count();
+        shared * 10_000 + (10_000usize.saturating_sub(id.len()))
+    };
 
-    // 2. Alias match
-    if let Some(canonical) = store.alias_map.get(&target_slug) {
-        return canonical.clone();
-    }
+    let mut best: Option<(usize, String)> = None;
+    let mut consider = |id: String| {
+        let s = score_for(&id);
+        if best.as_ref().map(|(b, _)| s > *b).unwrap_or(true) {
+            best = Some((s, id));
+        }
+    };
 
-    // 3. Namespace-qualified (e.g., from page in "trident/docs/explanation",
-    //    try "trident/docs/explanation/foo")
-    if let Some(ns) = source_namespace {
-        let ns_slug = slugify_page_name(&format!("{}/{}", ns, name));
-        if store.pages.contains_key(&ns_slug) {
-            return ns_slug;
+    // (a) Every page id whose basename equals the target slug. Includes the
+    //     exact-match case (id == target_slug, e.g. root-level page).
+    for id in store.pages.keys() {
+        if id == &target_slug || id.ends_with(&suffix) {
+            consider(id.clone());
         }
     }
 
-    // 4. Subgraph-qualified (e.g., from page in subgraph "trident", try "trident/foo")
+    // (b) Alias-target candidate, if the wikilink text is itself an alias.
+    if let Some(canonical) = store.alias_map.get(&target_slug) {
+        consider(canonical.clone());
+    }
+
+    if let Some((_, id)) = best {
+        return id;
+    }
+
+    // (c) Subgraph-qualified (e.g., from page in subgraph "trident", try "trident/foo")
     if let Some(sg) = source_subgraph {
         let sg_slug = slugify_page_name(&format!("{}/{}", sg, name));
         if store.pages.contains_key(&sg_slug) {
@@ -138,6 +166,6 @@ fn resolve_link(
         }
     }
 
-    // 5. Unresolved — return slug as-is
+    // (d) Unresolved — return slug as-is (will become a stub-link).
     target_slug
 }

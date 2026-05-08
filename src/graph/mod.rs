@@ -3,7 +3,7 @@
 // crystal-type: source
 // crystal-domain: comp
 // ---
-mod links;
+pub mod links;
 mod namespaces;
 pub mod pagerank;
 pub mod stats;

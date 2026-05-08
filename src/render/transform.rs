@@ -211,6 +211,19 @@ fn restore_math_blocks(html: &str, math_blocks: &[String]) -> String {
 
 /// Render markdown to HTML with wikilink resolution, embed expansion, block refs, and queries.
 pub fn render_markdown(markdown: &str, store: &PageStore, _code_theme: &str) -> RenderResult {
+    render_markdown_with_source(markdown, store, _code_theme, None, None)
+}
+
+/// Render markdown with explicit source-page context — required for the
+/// wikilink resolver's namespace + basename fallbacks to match a target like
+/// `[[visit]]` from `cyber valley/cyb.land.md` to `cyber valley/cyb.land/visit`.
+pub fn render_markdown_with_source(
+    markdown: &str,
+    store: &PageStore,
+    _code_theme: &str,
+    source_namespace: Option<&str>,
+    source_subgraph: Option<&str>,
+) -> RenderResult {
     // Pre-process: resolve embeds and block references in the markdown source
     let processed = resolve_embeds_and_refs(markdown, store, 0);
 
@@ -233,7 +246,7 @@ pub fn render_markdown(markdown: &str, store: &PageStore, _code_theme: &str) -> 
     let toc_entries = toc::extract_toc(root);
 
     // Transform wikilinks to proper HTML links
-    transform_wikilinks(root, store, &arena);
+    transform_wikilinks(root, store, &arena, source_namespace, source_subgraph);
 
     // Transform external links to open in new tab
     transform_external_links(root, &arena);
@@ -375,6 +388,8 @@ fn transform_wikilinks<'a>(
     root: &'a AstNode<'a>,
     store: &PageStore,
     arena: &'a Arena<AstNode<'a>>,
+    source_namespace: Option<&str>,
+    source_subgraph: Option<&str>,
 ) {
     // Collect nodes that need transformation first to avoid borrow issues
     let mut nodes_to_transform: Vec<(&'a AstNode<'a>, String)> = Vec::new();
@@ -400,16 +415,19 @@ fn transform_wikilinks<'a>(
         } else {
             (restored, None)
         };
-        let slug = slugify_page_name(&url);
+        let _slug = slugify_page_name(&url);
 
-        // Resolve alias to canonical page ID
-        let resolved_slug = if store.pages.contains_key(&slug) {
-            slug.clone()
-        } else if let Some(canonical_id) = store.alias_map.get(&slug) {
-            canonical_id.clone()
-        } else {
-            slug.clone()
-        };
+        // Resolve via the same logic the graph builder uses (links.rs) — exact
+        // match → alias → namespace-qualified → source-id walk → basename
+        // fallback. Without this, `[[visit]]` from `cyber valley/cyb.land.md`
+        // wouldn't find `cyber valley/cyb.land/visit` and would render as a
+        // stub-link to the top-level basename URL.
+        let resolved_slug = crate::graph::links::resolve_link(
+            &url,
+            source_namespace,
+            source_subgraph,
+            store,
+        );
 
         let class = if store.stub_pages.contains(&resolved_slug) {
             "internal-link stub-link"

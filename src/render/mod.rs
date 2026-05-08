@@ -41,7 +41,13 @@ pub fn render_single_page(
     env: &minijinja::Environment<'_>,
 ) -> Result<RenderedPage> {
     let peer_index = context::build_peer_index(store, config);
-    let render_result = transform::render_markdown(&page.content_md, store, &config.style.code.theme);
+    let render_result = transform::render_markdown_with_source(
+        &page.content_md,
+        store,
+        &config.style.code.theme,
+        page.namespace.as_deref(),
+        page.subgraph.as_deref(),
+    );
     let ctx = context::build_page_context(page, &render_result.html, &render_result.toc, store, config, &peer_index);
     let template_name = match page.kind {
         crate::parser::PageKind::Journal => "journal.html",
@@ -100,8 +106,17 @@ pub fn render_cached(
             }
         }
 
-        // Transform markdown to HTML with wikilink resolution
-        let render_result = transform::render_markdown(&page.content_md, store, &config.style.code.theme);
+        // Transform markdown to HTML with wikilink resolution. Pass source
+        // page's namespace + subgraph so wikilinks like `[[visit]]` from
+        // `cyber valley/cyb.land.md` resolve to `cyber valley/cyb.land/visit`
+        // via the source-id walk in links.rs::resolve_link.
+        let render_result = transform::render_markdown_with_source(
+            &page.content_md,
+            store,
+            &config.style.code.theme,
+            page.namespace.as_deref(),
+            page.subgraph.as_deref(),
+        );
 
         // Build template context
         let ctx = context::build_page_context(
@@ -272,7 +287,13 @@ fn render_index(
         if let Some(page) = store.pages.get(&root_id) {
             if PageStore::is_page_public(page, &config.content) {
                 let peer_index = context::build_peer_index(store, config);
-                let render_result = transform::render_markdown(&page.content_md, store, &config.style.code.theme);
+                let render_result = transform::render_markdown_with_source(
+                    &page.content_md,
+                    store,
+                    &config.style.code.theme,
+                    page.namespace.as_deref(),
+                    page.subgraph.as_deref(),
+                );
                 let ctx = context::build_page_context(
                     page,
                     &render_result.html,
@@ -438,7 +459,13 @@ fn render_blog(
         .map(|p| {
             // Truncate to 3 lines max, then render as full HTML with wikilinks
             let (truncated_md, was_truncated) = truncate_markdown(&p.content_md, 3);
-            let render_result = transform::render_markdown(&truncated_md, store, &config.style.code.theme);
+            let render_result = transform::render_markdown_with_source(
+                &truncated_md,
+                store,
+                &config.style.code.theme,
+                p.namespace.as_deref(),
+                p.subgraph.as_deref(),
+            );
 
             minijinja::context! {
                 title => p.meta.date.map(|d| d.format("%B %d, %Y").to_string()).unwrap_or_else(|| p.meta.title.clone()),
