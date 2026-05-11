@@ -75,10 +75,13 @@ struct BuildCache {
     last_namespace_children: HashMap<String, HashSet<PageId>>,
     /// Whether the initial full build has completed
     initialized: bool,
-    /// Cached subgraph parsed pages (rebuilt only when a subgraph file changes)
-    subgraph_pages: Vec<crate::parser::ParsedPage>,
-    /// Subgraph repo paths for change detection
-    subgraph_repo_paths: Vec<PathBuf>,
+    /// Cached subgraph parsed pages, keyed by subgraph name. Only the touched
+    /// subgraph is re-ingested per reload; the rest are reused. Sidesteps the
+    /// 30-60s "any write in any of 27 repos rebuilds the world" pathology.
+    subgraph_pages_by_name: HashMap<String, Vec<crate::parser::ParsedPage>>,
+    /// Subgraph name → repo path. Used to attribute a changed file to its
+    /// owning subgraph in O(decls) without recomputing globs.
+    subgraph_repo_by_name: HashMap<String, PathBuf>,
     /// Cached graph store — reused when no structural change (avoids expensive PageRank/gravity)
     cached_store: Option<crate::graph::PageStore>,
     /// Names of subgraphs declared private in the optional --subgraphs TOML.
@@ -100,8 +103,8 @@ impl BuildCache {
             last_content_page_ids: HashSet::new(),
             last_namespace_children: HashMap::new(),
             initialized: false,
-            subgraph_pages: Vec::new(),
-            subgraph_repo_paths: Vec::new(),
+            subgraph_pages_by_name: HashMap::new(),
+            subgraph_repo_by_name: HashMap::new(),
             cached_store: None,
             private_subgraph_names: HashSet::new(),
         }
@@ -250,10 +253,12 @@ fn watch_and_rebuild_loop(
         let mut root_parsed = crate::parser::parse_all(&discovered)?;
         let subgraph_decls = crate::scanner::subgraph::load_subgraph_decls(subgraphs_path)?;
         for decl in &subgraph_decls {
-            cache.subgraph_repo_paths.push(decl.repo_path.clone());
+            cache.subgraph_repo_by_name
+                .insert(decl.name.clone(), decl.repo_path.clone());
             let ingestion =
                 crate::scanner::subgraph::ingest_subgraph(decl, &mut root_parsed)?;
-            cache.subgraph_pages.extend(ingestion.pages);
+            cache.subgraph_pages_by_name
+                .insert(decl.name.clone(), ingestion.pages);
         }
         // Pre-populate parse cache and file cache for root graph files
         for file in discovered.pages.iter().chain(discovered.journals.iter()) {
@@ -292,9 +297,16 @@ fn watch_and_rebuild_loop(
                     !(p.id == decl.declaring_page_id && p.subgraph.is_none())
                 });
             }
-            warmup_pages.extend(cache.subgraph_pages.clone());
+            for pages in cache.subgraph_pages_by_name.values() {
+                warmup_pages.extend(pages.iter().cloned());
+            }
             // Snapshot content page IDs and hashes BEFORE graph build.
             // This must match what incremental_rebuild hashes from all_parsed (pre-graph).
+            // Synthesize dir indexes here too so the first incremental_rebuild
+            // doesn't see them as "new pages" and trigger a false structural rebuild.
+            let subgraph_names: Vec<String> =
+                subgraph_decls.iter().map(|d| d.name.clone()).collect();
+            crate::parser::synthesize_dir_indexes(&mut warmup_pages, &subgraph_names);
             for page in &warmup_pages {
                 cache.last_content_page_ids.insert(page.id.clone());
                 cache.content_hashes.insert(page.id.clone(), hash_str(&page.content_md));
@@ -429,7 +441,7 @@ fn try_fast_path(
 
     // No subgraph files
     if changed_paths.iter().any(|p| {
-        cache.subgraph_repo_paths.iter().any(|repo| p.starts_with(repo))
+        cache.subgraph_repo_by_name.values().any(|repo| p.starts_with(repo))
     }) {
         return None;
     }
@@ -623,8 +635,10 @@ fn incremental_rebuild(
     cache.parse_cache.retain(|path, _| current_paths.contains(path));
     cache.file_cache.retain(|path, _| current_paths.contains(path));
 
-    // Step 2b: Load subgraph decls (TOML), enforce monopoly, then either
-    // re-ingest if a subgraph file changed or reuse the cache.
+    // Step 2b: Load subgraph decls (TOML), enforce monopoly, then re-ingest
+    // ONLY the subgraphs whose files actually changed. Each subgraph repo can
+    // contain thousands of files (cyb: 4417, pussy-ts: 1209); re-ingesting all
+    // 27 on any spurious write was the source of 30-60s "live" reload times.
     let subgraph_decls = crate::scanner::subgraph::load_subgraph_decls(subgraphs_path)?;
     if !subgraph_decls.is_empty() {
         let subgraph_namespaces: Vec<String> =
@@ -634,43 +648,48 @@ fn incremental_rebuild(
             &subgraph_namespaces,
         );
 
-        // Check if any changed file is inside a subgraph repo
-        let subgraph_changed = changed_paths.iter().any(|p| {
-            cache.subgraph_repo_paths.iter().any(|repo| p.starts_with(repo))
-        });
+        // Decide per-subgraph: dirty (re-ingest) or clean (reuse cache).
+        // A subgraph is dirty when any changed path lies inside its repo OR
+        // when it has no cache entry yet (first run / new subgraph).
+        let mut dirty_subgraphs: HashSet<String> = HashSet::new();
+        for decl in &subgraph_decls {
+            let path_dirty = changed_paths.iter().any(|p| p.starts_with(&decl.repo_path));
+            let cache_cold = !cache.subgraph_pages_by_name.contains_key(&decl.name);
+            if path_dirty || cache_cold {
+                dirty_subgraphs.insert(decl.name.clone());
+            }
+        }
 
-        if subgraph_changed || cache.subgraph_pages.is_empty() {
-            // Re-scan and re-parse every subgraph (one was modified, or cache is cold).
-            // ingest_subgraph encapsulates the scan + parse + README merge + declaring-page
-            // eviction so the same logic runs here, in build_site, and in warmup.
-            let mut new_subgraph_pages = Vec::new();
-            let mut new_repo_paths = Vec::new();
-            for decl in &subgraph_decls {
-                new_repo_paths.push(decl.repo_path.clone());
+        // Track current decl set so we can prune removed subgraphs from the cache.
+        let current_names: HashSet<String> =
+            subgraph_decls.iter().map(|d| d.name.clone()).collect();
+        cache.subgraph_pages_by_name.retain(|n, _| current_names.contains(n));
+        cache.subgraph_repo_by_name.retain(|n, _| current_names.contains(n));
+
+        for decl in &subgraph_decls {
+            // Always update the repo path — a decl may have been renamed
+            cache.subgraph_repo_by_name.insert(decl.name.clone(), decl.repo_path.clone());
+
+            if dirty_subgraphs.contains(&decl.name) {
                 let ingestion =
                     crate::scanner::subgraph::ingest_subgraph(decl, &mut all_parsed)?;
-                new_subgraph_pages.extend(ingestion.pages);
-            }
-            // Mark all re-parsed subgraph pages as changed so the dirty
-            // detection at step 3 picks them up. Without this, subgraph page
-            // IDs are never in changed_page_ids and was_reparsed is always
-            // false — causing "Rebuilt 0/N pages" even when content changed.
-            for page in &new_subgraph_pages {
-                changed_page_ids.insert(page.id.clone());
-            }
-            cache.subgraph_pages = new_subgraph_pages;
-            cache.subgraph_repo_paths = new_repo_paths;
-        } else {
-            // No subgraph file changed — evict declaring pages and reuse cache.
-            // ingest_subgraph would have evicted them but we are bypassing it
-            // to skip the rescan; mirror its eviction here.
-            for decl in &subgraph_decls {
+                // Mark these pages so the dirty detection downstream picks them up.
+                for page in &ingestion.pages {
+                    changed_page_ids.insert(page.id.clone());
+                }
+                cache.subgraph_pages_by_name.insert(decl.name.clone(), ingestion.pages);
+            } else {
+                // Clean subgraph: mirror ingest_subgraph's declaring-page eviction
+                // so the cached README occupies the slot, not the root stub.
                 all_parsed.retain(|p| {
                     !(p.id == decl.declaring_page_id && p.subgraph.is_none())
                 });
             }
         }
-        all_parsed.extend(cache.subgraph_pages.clone());
+
+        for pages in cache.subgraph_pages_by_name.values() {
+            all_parsed.extend(pages.iter().cloned());
+        }
     }
 
     let subgraph_names: Vec<String> = subgraph_decls.iter().map(|d| d.name.clone()).collect();
