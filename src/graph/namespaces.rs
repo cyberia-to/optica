@@ -45,6 +45,7 @@ mod tests {
             alias_map: HashMap::new(),
             stub_pages: HashSet::new(),
             subgraph_pages: HashMap::new(),
+            subgraph_private: HashSet::new(),
             pagerank: HashMap::new(),
             focus: HashMap::new(),
             gravity: HashMap::new(),
