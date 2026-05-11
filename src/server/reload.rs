@@ -302,11 +302,14 @@ fn watch_and_rebuild_loop(
             }
             // Snapshot content page IDs and hashes BEFORE graph build.
             // This must match what incremental_rebuild hashes from all_parsed (pre-graph).
-            // Synthesize dir indexes here too so the first incremental_rebuild
-            // doesn't see them as "new pages" and trigger a false structural rebuild.
+            // Warmup must produce the EXACT same set + content as incremental_rebuild,
+            // otherwise the first reload sees fake structural drift and pays the full
+            // 30-60s graph rebuild cost. Mirror the same pipeline order:
+            //   synthesize_dir_indexes → apply_ipfs_rewrites → snapshot hashes.
             let subgraph_names: Vec<String> =
                 subgraph_decls.iter().map(|d| d.name.clone()).collect();
             crate::parser::synthesize_dir_indexes(&mut warmup_pages, &subgraph_names);
+            crate::parser::apply_ipfs_rewrites_for_config(&mut warmup_pages, config)?;
             for page in &warmup_pages {
                 cache.last_content_page_ids.insert(page.id.clone());
                 cache.content_hashes.insert(page.id.clone(), hash_str(&page.content_md));
@@ -331,6 +334,20 @@ fn watch_and_rebuild_loop(
                 .collect();
             // Cache the store so fast path can reuse it
             cache.cached_store = Some(store);
+        }
+
+        // Pre-render all pages into render_cache. Without this, the first
+        // live-reload edit pays a 50s cost rendering every page from scratch
+        // (build_site already rendered them to disk but the in-memory cache
+        // was empty). The cost is paid once at startup instead, so every edit
+        // afterwards stays sub-second.
+        if let Some(store) = cache.cached_store.as_ref() {
+            let _ = crate::render::render_cached(
+                store,
+                config,
+                &mut cache.render_cache,
+                None,
+            )?;
         }
 
         cache.initialized = true;
