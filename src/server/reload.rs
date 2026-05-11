@@ -205,10 +205,11 @@ fn watch_and_rebuild_loop(
     {
         let discovered = crate::scanner::scan(&config.build.input_dir, &config.content)?;
         let root_parsed = crate::parser::parse_all(&discovered)?;
-        let subgraph_decls = crate::scanner::subgraph::discover_subgraphs(
+        let subgraph_decls = crate::scanner::subgraph::load_subgraph_decls(
             &root_parsed,
             &config.build.input_dir,
-        );
+            subgraphs_path,
+        )?;
         // Canonicalise the workspace root and the build output dir
         // so we can compare paths reliably. Without this, watching
         // the root subgraph (when its repo IS the workspace) creates
@@ -253,10 +254,11 @@ fn watch_and_rebuild_loop(
     {
         let discovered = crate::scanner::scan(&config.build.input_dir, &config.content)?;
         let root_parsed = crate::parser::parse_all(&discovered)?;
-        let subgraph_decls = crate::scanner::subgraph::discover_subgraphs(
+        let subgraph_decls = crate::scanner::subgraph::load_subgraph_decls(
             &root_parsed,
             &config.build.input_dir,
-        );
+            subgraphs_path,
+        )?;
         for decl in &subgraph_decls {
             cache.subgraph_repo_paths.push(decl.repo_path.clone());
             let subgraph_files = crate::scanner::subgraph::scan_subgraph(decl)?;
@@ -421,7 +423,7 @@ fn watch_and_rebuild_loop(
                 if n == 1 { "" } else { "s" }
             );
 
-            match incremental_rebuild(config, &mut cache, &changed) {
+            match incremental_rebuild(config, &mut cache, &changed, subgraphs_path) {
                 Ok((rendered_count, dirty_count)) => {
                     let elapsed = start.elapsed();
                     build_version.fetch_add(1, Ordering::SeqCst);
@@ -610,6 +612,7 @@ fn incremental_rebuild(
     config: &SiteConfig,
     cache: &mut BuildCache,
     changed_paths: &HashSet<PathBuf>,
+    subgraphs_path: Option<&Path>,
 ) -> Result<(usize, usize)> {
     // Step 1: Scan (always full — it's fast)
     let discovered = crate::scanner::scan(&config.build.input_dir, &config.content)?;
@@ -662,10 +665,11 @@ fn incremental_rebuild(
     cache.file_cache.retain(|path, _| current_paths.contains(path));
 
     // Step 2b: Discover and merge subgraphs — use cached pages unless a subgraph file changed
-    let subgraph_decls = crate::scanner::subgraph::discover_subgraphs(
+    let subgraph_decls = crate::scanner::subgraph::load_subgraph_decls(
         &all_parsed,
         &config.build.input_dir,
-    );
+        subgraphs_path,
+    )?;
     if !subgraph_decls.is_empty() {
         let subgraph_namespaces: Vec<String> =
             subgraph_decls.iter().map(|d| d.name.clone()).collect();

@@ -76,6 +76,22 @@ pub const DEFAULT_EXCLUDES: &[&str] = &[
     "**/.nyc_output/**",
 ];
 
+/// Load subgraph declarations from the active source: a TOML config file when
+/// `subgraphs_path` is provided (workspace mode), otherwise frontmatter-based
+/// `subgraph: true` discovery (legacy single-repo mode). One call site for the
+/// choice keeps build, check, and live-reload aligned.
+pub fn load_subgraph_decls(
+    parsed_pages: &[ParsedPage],
+    input_dir: &Path,
+    subgraphs_path: Option<&Path>,
+) -> Result<Vec<SubgraphDecl>> {
+    if let Some(path) = subgraphs_path {
+        crate::scanner::subgraph_config::load(path)
+    } else {
+        Ok(discover_subgraphs(parsed_pages, input_dir))
+    }
+}
+
 /// Discover subgraph declarations from parsed root graph pages.
 /// Looks for pages with `subgraph: true` in frontmatter properties.
 pub fn discover_subgraphs(pages: &[ParsedPage], input_dir: &Path) -> Vec<SubgraphDecl> {

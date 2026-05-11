@@ -126,6 +126,11 @@ enum Commands {
         /// Logseq graph directory
         #[arg(default_value = ".")]
         input: PathBuf,
+
+        /// Path to subgraphs TOML. When set, replaces frontmatter-based
+        /// subgraph discovery. Each entry: { name, path, exclude[] }.
+        #[arg(long)]
+        subgraphs: Option<PathBuf>,
     },
 
     /// Compile cyberlinks into graph-native transformer embeddings
@@ -272,9 +277,9 @@ fn main() -> Result<()> {
                 );
             }
         }
-        Commands::Check { input } => {
+        Commands::Check { input, subgraphs } => {
             let (_config_path, config) = resolve_config(&cli.config, &input);
-            check_site(&config)?;
+            check_site(&config, subgraphs.as_deref())?;
         }
         Commands::Compile {
             input,
@@ -341,18 +346,20 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
     }
 
     // Step 3: Discover and scan subgraphs
-    let subgraph_decls = if let Some(path) = subgraphs_override {
-        if !quiet {
+    if !quiet {
+        if let Some(path) = subgraphs_override {
             println!(
                 "  {} Loaded subgraphs from {}",
                 "Config".dimmed(),
                 path.display()
             );
         }
-        optica::scanner::subgraph_config::load(path)?
-    } else {
-        optica::scanner::subgraph::discover_subgraphs(&parsed_pages, &config.build.input_dir)
-    };
+    }
+    let subgraph_decls = optica::scanner::subgraph::load_subgraph_decls(
+        &parsed_pages,
+        &config.build.input_dir,
+        subgraphs_override,
+    )?;
 
     if !subgraph_decls.is_empty() {
         let subgraph_namespaces: Vec<String> =
@@ -590,17 +597,18 @@ fn copy_subgraph_media(
     Ok(())
 }
 
-fn check_site(config: &SiteConfig) -> Result<()> {
+fn check_site(config: &SiteConfig, subgraphs_override: Option<&Path>) -> Result<()> {
     println!("{} {}", "Checking".cyan().bold(), config.site.title);
 
     let discovered = optica::scanner::scan(&config.build.input_dir, &config.content)?;
     let mut parsed_pages = optica::parser::parse_all(&discovered)?;
 
     // Discover and scan subgraphs (same as build_site)
-    let subgraph_decls = optica::scanner::subgraph::discover_subgraphs(
+    let subgraph_decls = optica::scanner::subgraph::load_subgraph_decls(
         &parsed_pages,
         &config.build.input_dir,
-    );
+        subgraphs_override,
+    )?;
     if !subgraph_decls.is_empty() {
         let subgraph_namespaces: Vec<String> =
             subgraph_decls.iter().map(|d| d.name.clone()).collect();
