@@ -4,7 +4,7 @@
 // crystal-domain: comp
 // ---
 use crate::parser::{PageId, ParsedPage};
-use crate::scanner::{DiscoveredFile, FileKind};
+use crate::scanner::{DiscoveredFile, DiscoveredFiles, FileKind};
 use anyhow::Result;
 use globset::{Glob, GlobSetBuilder};
 use std::path::{Path, PathBuf};
@@ -76,90 +76,126 @@ pub const DEFAULT_EXCLUDES: &[&str] = &[
     "**/.nyc_output/**",
 ];
 
-/// Load subgraph declarations from the active source: a TOML config file when
-/// `subgraphs_path` is provided (workspace mode), otherwise frontmatter-based
-/// `subgraph: true` discovery (legacy single-repo mode). One call site for the
-/// choice keeps build, check, and live-reload aligned.
-pub fn load_subgraph_decls(
-    parsed_pages: &[ParsedPage],
-    input_dir: &Path,
-    subgraphs_path: Option<&Path>,
-) -> Result<Vec<SubgraphDecl>> {
-    if let Some(path) = subgraphs_path {
-        crate::scanner::subgraph_config::load(path)
-    } else {
-        Ok(discover_subgraphs(parsed_pages, input_dir))
+/// Load subgraph declarations from a TOML config file. With no path, returns
+/// an empty list — optica acts on a single repo with no embedded subgraphs.
+///
+/// One call site for decl loading prevents the regression class where a new
+/// code path forgets workspace mode and silently drops every subgraph.
+pub fn load_subgraph_decls(subgraphs_path: Option<&Path>) -> Result<Vec<SubgraphDecl>> {
+    match subgraphs_path {
+        Some(path) => crate::scanner::subgraph_config::load(path),
+        None => Ok(Vec::new()),
     }
 }
 
-/// Discover subgraph declarations from parsed root graph pages.
-/// Looks for pages with `subgraph: true` in frontmatter properties.
-pub fn discover_subgraphs(pages: &[ParsedPage], input_dir: &Path) -> Vec<SubgraphDecl> {
-    let mut decls = Vec::new();
+/// Stats reported by `ingest_subgraph` for one decl. Callers print or aggregate.
+pub struct SubgraphScanStats {
+    pub name: String,
+    pub page_count: usize,
+    pub file_count: usize,
+}
 
-    for page in pages {
-        let props = &page.meta.properties;
+/// Result of ingesting one subgraph: all new pages it contributes (md + non-md)
+/// plus a stats summary. The declaring page (if present in `root_pages`) is
+/// removed in place so the README produced by this ingestion takes its slot.
+pub struct SubgraphIngestion {
+    pub pages: Vec<ParsedPage>,
+    pub stats: SubgraphScanStats,
+}
 
-        // Check for subgraph: true
-        let is_subgraph = props
-            .get("subgraph")
-            .map(|v| v.trim().eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+/// Scan, parse, and merge a single subgraph. Encapsulates every step that used
+/// to be duplicated across build, check, watch warm-up, and incremental rebuild:
+///
+///   1. WalkDir over the subgraph repo, classifying files
+///   2. Parse markdown pages; non-md files become code-fence preview pages
+///   3. If a page's id matches the decl's `declaring_page_id`, copy the root
+///      declaring page's metadata + outgoing links and prepend its body
+///   4. Remove the declaring page from `root_pages` so its slot is freed
+///
+/// One canonical implementation — every caller routes through here.
+pub fn ingest_subgraph(
+    decl: &SubgraphDecl,
+    root_pages: &mut Vec<ParsedPage>,
+) -> Result<SubgraphIngestion> {
+    let subgraph_files = scan_subgraph(decl)?;
+    let page_count = subgraph_files
+        .iter()
+        .filter(|f| f.kind == FileKind::Page)
+        .count();
+    let file_count = subgraph_files
+        .iter()
+        .filter(|f| f.kind == FileKind::File)
+        .count();
 
-        if !is_subgraph {
+    // Capture the declaring page so we can hoist its metadata into the README.
+    // Cloned because we will later evict it from root_pages.
+    let declaring_page = root_pages
+        .iter()
+        .find(|p| p.id == decl.declaring_page_id)
+        .cloned();
+
+    let decl_slug = crate::parser::slugify_page_name(&decl.declaring_page_id);
+
+    let mut pages = Vec::with_capacity(page_count + file_count);
+
+    // Step 1: markdown pages, with README merging the declaring page's metadata
+    for file in &subgraph_files {
+        if file.kind != FileKind::Page {
             continue;
         }
-
-        // Parse repo path (required)
-        let repo_raw = match props.get("repo") {
-            Some(v) => v.trim().to_string(),
-            None => {
-                eprintln!(
-                    "Warning: subgraph page '{}' has subgraph: true but no repo: path",
-                    page.id
-                );
-                continue;
+        let mut page = crate::parser::parse_file(file)?;
+        if page.id == decl.declaring_page_id || page.id == decl_slug {
+            if let Some(ref dp) = declaring_page {
+                page.meta.tags = dp.meta.tags.clone();
+                page.meta.aliases = dp.meta.aliases.clone();
+                page.meta.properties = dp.meta.properties.clone();
+                page.meta.public = dp.meta.public;
+                page.meta.icon = dp.meta.icon.clone();
+                page.meta.stake = dp.meta.stake;
+                if !dp.content_md.trim().is_empty() {
+                    let readme_content = std::mem::take(&mut page.content_md);
+                    page.content_md = crate::parser::merge_subgraph_content(
+                        &dp.content_md,
+                        &decl.name,
+                        &readme_content,
+                    );
+                }
+                for link in &dp.outgoing_links {
+                    if !page.outgoing_links.contains(link) {
+                        page.outgoing_links.push(link.clone());
+                    }
+                }
             }
-        };
-
-        // Resolve repo path relative to input_dir
-        let repo_path = input_dir.join(&repo_raw);
-        let repo_path = repo_path
-            .canonicalize()
-            .unwrap_or_else(|_| repo_path.clone());
-
-        // Parse exclude patterns (optional, comma-separated)
-        let custom_excludes: Vec<String> = props
-            .get("exclude")
-            .map(|v| {
-                v.split(',')
-                    .map(|s| s.trim().trim_matches('"').to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // Merge default + custom excludes
-        let mut exclude_patterns: Vec<String> =
-            DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
-        exclude_patterns.extend(custom_excludes);
-
-        // Use the declaring page's title (original name before slugification)
-        // as the subgraph name to preserve namespace nesting.
-        // e.g., title "trident" → name "trident"
-        // e.g., title "cyber/context" → name "cyber/context"
-        let name = page.meta.title.to_lowercase();
-
-        decls.push(SubgraphDecl {
-            name,
-            repo_path,
-            exclude_patterns,
-            declaring_page_id: page.id.clone(),
-            is_private: false,
-        });
+        }
+        pages.push(page);
     }
 
-    decls
+    // Step 2: evict the declaring page from root — the subgraph README owns it now
+    if declaring_page.is_some() {
+        root_pages.retain(|p| !(p.id == decl.declaring_page_id && p.subgraph.is_none()));
+    }
+
+    // Step 3: non-markdown files as code-preview pages
+    let sg_files: Vec<DiscoveredFile> = subgraph_files
+        .into_iter()
+        .filter(|f| f.kind == FileKind::File)
+        .collect();
+    let sg_discovered = DiscoveredFiles {
+        pages: Vec::new(),
+        journals: Vec::new(),
+        media: Vec::new(),
+        files: sg_files,
+    };
+    pages.extend(crate::parser::parse_all(&sg_discovered)?);
+
+    Ok(SubgraphIngestion {
+        pages,
+        stats: SubgraphScanStats {
+            name: decl.name.clone(),
+            page_count,
+            file_count,
+        },
+    })
 }
 
 /// Resolve the graph directory inside a subgraph repo, using the same
@@ -381,6 +417,73 @@ mod tests {
         assert_eq!(
             subgraph_file_name(&PathBuf::from("/git/trident/Cargo.toml"), &repo, "trident"),
             "trident/Cargo.toml"
+        );
+    }
+
+    /// Regression: workspace mode (TOML --subgraphs) must produce subgraph
+    /// pages everywhere — build, check, and incremental reload. The historical
+    /// failure was a second code path silently calling the frontmatter
+    /// discovery, returning zero decls, and dropping all subgraph content.
+    ///
+    /// This test exercises the public surface end-to-end: a TOML config on
+    /// disk, load_subgraph_decls, then ingest_subgraph. If either piece
+    /// regresses, the assertions fail with a clear signal.
+    #[test]
+    fn test_load_and_ingest_produces_pages_for_toml_subgraph() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let workspace = TempDir::new().unwrap();
+        let repo = workspace.path().join("mysub");
+        fs::create_dir_all(repo.join("root")).unwrap();
+        fs::write(
+            repo.join("README.md"),
+            "---\ntags: doc\n---\n# mysub\n\nrepo readme",
+        ).unwrap();
+        fs::write(
+            repo.join("root").join("inner.md"),
+            "---\ntags: doc\n---\n\ninner page",
+        ).unwrap();
+        fs::write(repo.join("Cargo.toml"), "[package]\nname=\"x\"").unwrap();
+
+        let config_path = workspace.path().join("subgraphs.toml");
+        fs::write(
+            &config_path,
+            format!(
+                "[[subgraphs]]\nname = \"mysub\"\npath = {:?}\n",
+                repo
+            ),
+        ).unwrap();
+
+        // load_subgraph_decls with TOML must produce a non-empty list.
+        // Without it (None), it must produce an empty list — never crash.
+        let decls = load_subgraph_decls(Some(&config_path)).unwrap();
+        assert_eq!(decls.len(), 1, "TOML config with one subgraph should load one decl");
+        assert!(load_subgraph_decls(None).unwrap().is_empty(), "no path → no decls");
+
+        // ingest_subgraph must return non-empty pages (md + non-md), proving
+        // the full pipeline runs. The historical bug bypassed this entirely.
+        let mut root_pages: Vec<ParsedPage> = vec![];
+        let ingestion = ingest_subgraph(&decls[0], &mut root_pages).unwrap();
+        assert!(
+            ingestion.stats.page_count >= 2,
+            "expected at least README + inner page, got {} markdown pages",
+            ingestion.stats.page_count
+        );
+        assert!(
+            ingestion.stats.file_count >= 1,
+            "expected Cargo.toml as a non-md preview page, got {} file pages",
+            ingestion.stats.file_count
+        );
+        assert!(
+            !ingestion.pages.is_empty(),
+            "ingest_subgraph must produce pages; the bug was zero pages slipping through silently"
+        );
+        // Pages should carry the subgraph attribution so downstream filters
+        // (private subgraph filtering, badge rendering) work.
+        assert!(
+            ingestion.pages.iter().all(|p| p.subgraph.as_deref() == Some("mysub")),
+            "every ingested page must be tagged with the subgraph name"
         );
     }
 

@@ -345,7 +345,8 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
         println!("  {} Parsed {} pages", "Parse".dimmed(), parsed_pages.len());
     }
 
-    // Step 3: Discover and scan subgraphs
+    // Step 3: Load subgraph decls (TOML config), enforce namespace monopoly,
+    // then ingest each via the single shared pipeline.
     if !quiet {
         if let Some(path) = subgraphs_override {
             println!(
@@ -355,17 +356,11 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
             );
         }
     }
-    let subgraph_decls = optica::scanner::subgraph::load_subgraph_decls(
-        &parsed_pages,
-        &config.build.input_dir,
-        subgraphs_override,
-    )?;
+    let subgraph_decls = optica::scanner::subgraph::load_subgraph_decls(subgraphs_override)?;
 
     if !subgraph_decls.is_empty() {
         let subgraph_namespaces: Vec<String> =
             subgraph_decls.iter().map(|d| d.name.clone()).collect();
-
-        // Enforce namespace monopoly on root pages
         let evicted = optica::scanner::subgraph::enforce_namespace_monopoly(
             &mut parsed_pages,
             &subgraph_namespaces,
@@ -376,88 +371,18 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
             }
         }
 
-        // Scan and parse each subgraph
         for decl in &subgraph_decls {
-            let subgraph_files = optica::scanner::subgraph::scan_subgraph(decl)?;
-            let sg_page_count = subgraph_files.iter().filter(|f| f.kind == optica::scanner::FileKind::Page).count();
-            let sg_file_count = subgraph_files.iter().filter(|f| f.kind == optica::scanner::FileKind::File).count();
-
-            // Find the declaring page so we can merge its metadata into the README
-            let declaring_page = parsed_pages
-                .iter()
-                .find(|p| p.id == decl.declaring_page_id)
-                .cloned();
-
-            for file in &subgraph_files {
-                let mut page = if file.kind == optica::scanner::FileKind::Page {
-                    optica::parser::parse_file(file)?
-                } else {
-                    continue; // non-md handled below
-                };
-
-                // If this is the repo-root README (id matches declaring page),
-                // merge the declaring page's metadata so tags/aliases/stake etc. are preserved.
-                let decl_slug = optica::parser::slugify_page_name(&decl.declaring_page_id);
-                if page.id == decl.declaring_page_id || page.id == decl_slug {
-                    if let Some(ref decl_page) = declaring_page {
-                        page.meta.tags = decl_page.meta.tags.clone();
-                        page.meta.aliases = decl_page.meta.aliases.clone();
-                        page.meta.properties = decl_page.meta.properties.clone();
-                        page.meta.public = decl_page.meta.public;
-                        page.meta.icon = decl_page.meta.icon.clone();
-                        page.meta.stake = decl_page.meta.stake;
-                        // Root graph content first, then a level-1 divider,
-                        // then README content with all its headings demoted by 1.
-                        if !decl_page.content_md.trim().is_empty() {
-                            let readme_content = std::mem::take(&mut page.content_md);
-                            page.content_md = optica::parser::merge_subgraph_content(
-                                &decl_page.content_md,
-                                &decl.name,
-                                &readme_content,
-                            );
-                        }
-                        // Merge outgoing links from the declaring page
-                        for link in &decl_page.outgoing_links {
-                            if !page.outgoing_links.contains(link) {
-                                page.outgoing_links.push(link.clone());
-                            }
-                        }
-                    }
-                }
-
-                parsed_pages.push(page);
-            }
-
-            // Remove the declaring page from root — its slot is now taken by the README
-            if declaring_page.is_some() {
-                parsed_pages.retain(|p| {
-                    !(p.id == decl.declaring_page_id && p.subgraph.is_none())
-                });
-            }
-
-            // Parse non-markdown files via a temporary DiscoveredFiles
-            let sg_files: Vec<_> = subgraph_files
-                .into_iter()
-                .filter(|f| f.kind == optica::scanner::FileKind::File)
-                .collect();
-            let sg_discovered = optica::scanner::DiscoveredFiles {
-                pages: Vec::new(),
-                journals: Vec::new(),
-                media: Vec::new(),
-                files: sg_files,
-            };
-            let sg_file_pages = optica::parser::parse_all(&sg_discovered)?;
-            parsed_pages.extend(sg_file_pages);
-
+            let ingestion = optica::scanner::subgraph::ingest_subgraph(decl, &mut parsed_pages)?;
             if !quiet {
                 println!(
                     "  {} Subgraph '{}': {} pages, {} files",
                     "Scan".dimmed(),
-                    decl.name,
-                    sg_page_count,
-                    sg_file_count
+                    ingestion.stats.name,
+                    ingestion.stats.page_count,
+                    ingestion.stats.file_count
                 );
             }
+            parsed_pages.extend(ingestion.pages);
         }
     }
 
@@ -603,12 +528,8 @@ fn check_site(config: &SiteConfig, subgraphs_override: Option<&Path>) -> Result<
     let discovered = optica::scanner::scan(&config.build.input_dir, &config.content)?;
     let mut parsed_pages = optica::parser::parse_all(&discovered)?;
 
-    // Discover and scan subgraphs (same as build_site)
-    let subgraph_decls = optica::scanner::subgraph::load_subgraph_decls(
-        &parsed_pages,
-        &config.build.input_dir,
-        subgraphs_override,
-    )?;
+    // Load subgraph decls, enforce monopoly, ingest each — single shared pipeline.
+    let subgraph_decls = optica::scanner::subgraph::load_subgraph_decls(subgraphs_override)?;
     if !subgraph_decls.is_empty() {
         let subgraph_namespaces: Vec<String> =
             subgraph_decls.iter().map(|d| d.name.clone()).collect();
@@ -620,61 +541,9 @@ fn check_site(config: &SiteConfig, subgraphs_override: Option<&Path>) -> Result<
             println!("  {} Evicted '{}': {}", "Monopoly".yellow(), id, reason);
         }
         for decl in &subgraph_decls {
-            let subgraph_files = optica::scanner::subgraph::scan_subgraph(decl)?;
-            let declaring_page = parsed_pages
-                .iter()
-                .find(|p| p.id == decl.declaring_page_id)
-                .cloned();
-            for file in &subgraph_files {
-                if file.kind == optica::scanner::FileKind::Page {
-                    let mut page = optica::parser::parse_file(file)?;
-                    if page.id == decl.declaring_page_id || page.id == optica::parser::slugify_page_name(&decl.declaring_page_id) {
-                        if let Some(ref dp) = declaring_page {
-                            page.meta.tags = dp.meta.tags.clone();
-                            page.meta.aliases = dp.meta.aliases.clone();
-                            page.meta.properties = dp.meta.properties.clone();
-                            page.meta.public = dp.meta.public;
-                            page.meta.icon = dp.meta.icon.clone();
-                            page.meta.stake = dp.meta.stake;
-                            if !dp.content_md.trim().is_empty() {
-                                let readme_content = std::mem::take(&mut page.content_md);
-                                page.content_md = optica::parser::merge_subgraph_content(
-                                    &dp.content_md,
-                                    &decl.name,
-                                    &readme_content,
-                                );
-                            }
-                            for link in &dp.outgoing_links {
-                                if !page.outgoing_links.contains(link) {
-                                    page.outgoing_links.push(link.clone());
-                                }
-                            }
-                        }
-                    }
-                    parsed_pages.push(page);
-                }
-            }
-            if declaring_page.is_some() {
-                parsed_pages.retain(|p| {
-                    !(p.id == decl.declaring_page_id && p.subgraph.is_none())
-                });
-            }
-            let sg_files: Vec<_> = subgraph_files
-                .into_iter()
-                .filter(|f| f.kind == optica::scanner::FileKind::File)
-                .collect();
-            let sg_discovered = optica::scanner::DiscoveredFiles {
-                pages: Vec::new(),
-                journals: Vec::new(),
-                media: Vec::new(),
-                files: sg_files,
-            };
-            parsed_pages.extend(optica::parser::parse_all(&sg_discovered)?);
-            println!(
-                "  {} Subgraph '{}' scanned",
-                "Scan".dimmed(),
-                decl.name
-            );
+            let ingestion = optica::scanner::subgraph::ingest_subgraph(decl, &mut parsed_pages)?;
+            println!("  {} Subgraph '{}' scanned", "Scan".dimmed(), decl.name);
+            parsed_pages.extend(ingestion.pages);
         }
     }
 

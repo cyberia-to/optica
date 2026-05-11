@@ -36,7 +36,7 @@ your-project/
 - namespace hierarchy — directories become navigable namespaces with breadcrumbs
 - dimensional navigation — pages with the same name across namespaces are shown as "dimensions"
 - sub-second live reload — content-only edits skip the full scan and rebuild in <10ms
-- subgraph support — import a whole repo as a subgraph via `subgraph: true` in frontmatter
+- subgraph support — import sibling repos as subgraphs via a TOML config (`optica build --subgraphs subgraphs.toml`)
 - YAML frontmatter — tags, aliases, icons, custom properties
 - LaTeX math — inline `$...$` and block `$$...$$`
 - query expressions — `{{query (and (page-tags [[tag]]))}}` for dynamic content
