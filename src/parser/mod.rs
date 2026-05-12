@@ -550,6 +550,19 @@ fn rewrite_relative_links(content: &str, page_name: &str, is_readme: bool) -> St
     // Subgraph name is the first path component
     let subgraph_name = page_name.split('/').next().unwrap_or(page_name);
 
+    // Transparent graph-dir prefixes (mirror scanner::subgraph::resolve_subgraph_graph_dir).
+    // The scanner strips these from page names, so a link like `root/foo.md`
+    // resolved to `<subgraph>/root/foo` must collapse to `<subgraph>/foo`.
+    let strip_graph_dir = |resolved: &str| -> String {
+        for d in ["root", "graph", "pages"] {
+            let prefix = format!("{}/{}/", subgraph_name, d);
+            if let Some(rest) = resolved.strip_prefix(&prefix) {
+                return format!("{}/{}", subgraph_name, rest);
+            }
+        }
+        resolved.to_string()
+    };
+
     let is_external = |url: &str| -> bool {
         url.starts_with("http://")
             || url.starts_with("https://")
@@ -605,7 +618,10 @@ fn rewrite_relative_links(content: &str, page_name: &str, is_readme: bool) -> St
             return format!("{}[{}](/media/{}/{}{})", prefix, text, subgraph_name, repo_relative, fragment);
         }
 
-        // Page links get slugified
+        // Page links: strip the transparent root/graph/pages prefix the scanner
+        // hides, then slugify. Without this, [foo](root/foo.md) from a README
+        // resolves to /<sg>/root/foo, but the page lives at /<sg>/foo.
+        let resolved = strip_graph_dir(&resolved);
         let resolved = resolved
             .strip_suffix(".md")
             .or_else(|| resolved.strip_suffix(".markdown"))
@@ -646,6 +662,7 @@ fn rewrite_relative_links(content: &str, page_name: &str, is_readme: bool) -> St
         if is_media_extension(url) {
             format!("{}/media/{}/{}{}{}", attr_prefix, subgraph_name, repo_relative, fragment, quote_end)
         } else {
+            let resolved = strip_graph_dir(&resolved);
             let resolved = resolved
                 .strip_suffix(".md")
                 .or_else(|| resolved.strip_suffix(".markdown"))
