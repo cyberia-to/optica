@@ -35,7 +35,6 @@ pub const DEFAULT_EXCLUDES: &[&str] = &[
     "**/.next/**",
     "out/**",
     "**/out/**",
-    ".claude/**",
     "**/.DS_Store",
     "Cargo.lock",
     "**/Cargo.lock",
@@ -237,7 +236,7 @@ pub fn scan_subgraph(decl: &SubgraphDecl) -> Result<Vec<DiscoveredFile>> {
     // Directories to skip entirely — prevents WalkDir from descending into
     // .git/objects, target/, node_modules/ etc. which can contain thousands of files.
     let skip_dirs: std::collections::HashSet<&str> =
-        [".git", "target", "node_modules", "build", ".claude"].into();
+        [".git", "target", "node_modules", "build"].into();
 
     let mut files = Vec::new();
 

@@ -370,7 +370,6 @@ fn watch_and_rebuild_loop(
                     && !path_str.contains("/target/")
                     && !path_str.contains("/node_modules/")
                     && !path_str.contains("/build/")
-                    && !path_str.contains("/.claude/")
             });
 
             if changed.is_empty() {
