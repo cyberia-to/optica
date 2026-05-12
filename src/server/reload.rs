@@ -87,6 +87,9 @@ struct BuildCache {
     /// Names of subgraphs declared private in the optional --subgraphs TOML.
     /// Applied to every store after build_graph so visibility survives reload.
     private_subgraph_names: HashSet<String>,
+    /// Per-subgraph parse cache: path → (mtime, parsed page). Only re-parses
+    /// files whose mtime changed, cutting large-subgraph re-ingest from 30s to <1s.
+    subgraph_parse_caches: HashMap<String, crate::scanner::subgraph::SubgraphParseCache>,
 }
 
 impl BuildCache {
@@ -107,6 +110,7 @@ impl BuildCache {
             subgraph_repo_by_name: HashMap::new(),
             cached_store: None,
             private_subgraph_names: HashSet::new(),
+            subgraph_parse_caches: HashMap::new(),
         }
     }
 }
@@ -255,8 +259,9 @@ fn watch_and_rebuild_loop(
         for decl in &subgraph_decls {
             cache.subgraph_repo_by_name
                 .insert(decl.name.clone(), decl.repo_path.clone());
+            let sg_cache = cache.subgraph_parse_caches.entry(decl.name.clone()).or_default();
             let ingestion =
-                crate::scanner::subgraph::ingest_subgraph(decl, &mut root_parsed)?;
+                crate::scanner::subgraph::ingest_subgraph_cached(decl, &mut root_parsed, sg_cache)?;
             cache.subgraph_pages_by_name
                 .insert(decl.name.clone(), ingestion.pages);
         }
@@ -681,14 +686,16 @@ fn incremental_rebuild(
             subgraph_decls.iter().map(|d| d.name.clone()).collect();
         cache.subgraph_pages_by_name.retain(|n, _| current_names.contains(n));
         cache.subgraph_repo_by_name.retain(|n, _| current_names.contains(n));
+        cache.subgraph_parse_caches.retain(|n, _| current_names.contains(n));
 
         for decl in &subgraph_decls {
             // Always update the repo path — a decl may have been renamed
             cache.subgraph_repo_by_name.insert(decl.name.clone(), decl.repo_path.clone());
 
             if dirty_subgraphs.contains(&decl.name) {
+                let sg_cache = cache.subgraph_parse_caches.entry(decl.name.clone()).or_default();
                 let ingestion =
-                    crate::scanner::subgraph::ingest_subgraph(decl, &mut all_parsed)?;
+                    crate::scanner::subgraph::ingest_subgraph_cached(decl, &mut all_parsed, sg_cache)?;
                 // Mark these pages so the dirty detection downstream picks them up.
                 for page in &ingestion.pages {
                     changed_page_ids.insert(page.id.clone());
@@ -794,7 +801,16 @@ fn incremental_rebuild(
     // Full graph build (PageRank, gravity, etc.) is expensive — only do it for structural changes.
     if structural_change || cache.cached_store.is_none() {
         let old_namespace_children = cache.last_namespace_children.clone();
-        let mut store = crate::graph::build_graph(all_parsed)?;
+        let mut store = if let Some(old) = cache.cached_store.as_ref() {
+            crate::graph::build_graph_fast(
+                all_parsed,
+                old.pagerank.clone(),
+                old.focus.clone(),
+                old.gravity.clone(),
+            )?
+        } else {
+            crate::graph::build_graph(all_parsed)?
+        };
         store.subgraph_private = cache.private_subgraph_names.clone();
         cache.last_content_page_ids = content_page_ids.clone();
 

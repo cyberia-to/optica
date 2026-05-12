@@ -214,6 +214,50 @@ pub fn build_graph(pages: Vec<ParsedPage>) -> Result<PageStore> {
     Ok(store)
 }
 
+/// Fast variant for live reload: rebuilds all graph indices (links, backlinks,
+/// tags, namespaces, stubs) but reuses PageRank/trikernel/gravity from the
+/// previous build. Reduces structural-change rebuild time from ~43s to ~1s.
+pub fn build_graph_fast(
+    pages: Vec<ParsedPage>,
+    old_pagerank: HashMap<PageId, f64>,
+    old_focus: HashMap<PageId, f64>,
+    old_gravity: HashMap<PageId, f64>,
+) -> Result<PageStore> {
+    let mut store = PageStore {
+        pages: HashMap::new(),
+        forward_links: HashMap::new(),
+        backlinks: HashMap::new(),
+        tag_index: HashMap::new(),
+        namespace_tree: HashMap::new(),
+        alias_map: HashMap::new(),
+        stub_pages: HashSet::new(),
+        subgraph_pages: HashMap::new(),
+        subgraph_private: HashSet::new(),
+        pagerank: old_pagerank,
+        focus: old_focus,
+        gravity: old_gravity,
+    };
+
+    for page in pages {
+        let id = page.id.clone();
+        for alias in &page.meta.aliases {
+            let alias_slug = slugify_page_name(alias);
+            store.alias_map.insert(alias_slug, id.clone());
+        }
+        if let Some(ref sg) = page.subgraph {
+            store.subgraph_pages.entry(sg.clone()).or_default().insert(id.clone());
+        }
+        store.pages.insert(id, page);
+    }
+
+    let original_names = links::build_link_indices(&mut store);
+    create_stub_pages(&mut store, &original_names);
+    tags::build_tag_index(&mut store);
+    namespaces::build_namespace_tree(&mut store);
+
+    Ok(store)
+}
+
 /// Compute gravity for each node: G_i = π_i × Σ_{j: d(i,j) ≤ 2}(π_j / d(i,j)²).
 /// Uses 2-hop BFS approximation: O(n × avg_degree²) instead of O(n²).
 fn compute_gravity(store: &PageStore) -> HashMap<PageId, f64> {
