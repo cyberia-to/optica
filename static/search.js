@@ -114,7 +114,7 @@
     return Math.max(fuzzyMatch(query, target), acronymMatch(query, target));
   }
 
-  // Score = (title*3 + bestTag*2 + excerpt*0.6) × graphPrior.
+  // Score = (title*3 + bestAlias*2.5 + bestTag*2 + excerpt*0.6) × graphPrior.
   //
   // graphPrior folds the tri-kernel focus and gravity percentiles
   // (pre-computed in Rust, shipped 0..1) into a multiplier on the
@@ -128,8 +128,17 @@
   //   - top hub:          prior = 1.7
   // A perfect title match still wins outright, but among similarly-
   // matched pages the more central ones float to the top.
+  // Aliases are weighted 2.5× — they are alternative titles, so they
+  // rank above tags (2×) but below the canonical title (3×).
   function scoreEntry(entry, query) {
     var titleScore = bestScore(query, entry.title) * 3;
+    var aliasScore = 0;
+    if (entry.aliases) {
+      for (var j = 0; j < entry.aliases.length; j++) {
+        var as_ = bestScore(query, entry.aliases[j]) * 2.5;
+        if (as_ > aliasScore) aliasScore = as_;
+      }
+    }
     var tagScore = 0;
     if (entry.tags) {
       for (var i = 0; i < entry.tags.length; i++) {
@@ -138,7 +147,7 @@
       }
     }
     var excerptScore = bestScore(query, entry.excerpt || "") * 0.6;
-    var matchScore = titleScore + tagScore + excerptScore;
+    var matchScore = titleScore + aliasScore + tagScore + excerptScore;
     if (matchScore <= 0) return 0;
     var f = entry.focus_pct || 0;
     var g = entry.gravity_pct || 0;

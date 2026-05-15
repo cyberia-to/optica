@@ -14,6 +14,7 @@ struct SearchEntry {
     title: String,
     url: String,
     tags: Vec<String>,
+    aliases: Vec<String>,
     excerpt: String,
     /// Percentile rank (0..1) of the page's tri-kernel focus.
     /// Pre-normalized so the JS scorer can fold it directly into a
@@ -74,6 +75,7 @@ pub fn generate_search_index(
                 title: page.meta.title.clone(),
                 url: format!("/{}", page.id),
                 tags: page.meta.tags.clone(),
+                aliases: page.meta.aliases.clone(),
                 excerpt,
                 focus_pct: round3(focus_pcts[i]),
                 gravity_pct: round3(gravity_pcts[i]),
