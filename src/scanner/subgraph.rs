@@ -29,6 +29,8 @@ pub struct SubgraphDecl {
     pub is_private: bool,
     /// When true, optica adds the "nav" tag to this subgraph's root page.
     pub menu: bool,
+    /// Position in the subgraph config — used as menu_order so nav items appear in declaration order.
+    pub menu_order: Option<i32>,
 }
 
 /// Default exclude patterns applied to all subgraphs.
@@ -176,8 +178,13 @@ pub fn ingest_subgraph(
                     }
                 }
             }
-            if decl.menu && !page.meta.tags.contains(&"nav".to_string()) {
-                page.meta.tags.push("nav".to_string());
+            if decl.menu {
+                if !page.meta.tags.contains(&"nav".to_string()) {
+                    page.meta.tags.push("nav".to_string());
+                }
+                if page.meta.menu_order.is_none() {
+                    page.meta.menu_order = decl.menu_order;
+                }
             }
         }
         pages.push(page);

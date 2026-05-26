@@ -42,6 +42,8 @@ pub struct SubgraphEntry {
     #[serde(default)]
     pub menu: bool,
     #[serde(default)]
+    pub menu_order: Option<i32>,
+    #[serde(default)]
     pub commit: Option<String>,
 }
 
@@ -82,6 +84,7 @@ pub fn load(config_path: &Path) -> Result<Vec<SubgraphDecl>> {
                 declaring_page_id: PageId::from(entry.name),
                 is_private,
                 menu: entry.menu,
+                menu_order: entry.menu_order,
             }
         })
         .collect();
