@@ -41,6 +41,8 @@ pub struct SubgraphEntry {
     pub visibility: Option<String>,
     #[serde(default)]
     pub menu: bool,
+    #[serde(default)]
+    pub commit: Option<String>,
 }
 
 pub fn load(config_path: &Path) -> Result<Vec<SubgraphDecl>> {
