@@ -29,6 +29,12 @@ pub struct SubgraphsFile {
 pub struct SubgraphEntry {
     pub name: String,
     pub path: PathBuf,
+    /// URL mount point for this subgraph's pages.
+    /// Empty string or absent → use `name` as the prefix (default behavior).
+    /// Set to `""` for a root-mounted subgraph (pages at `/`).
+    /// Set to `"warriors/zoya"` for pages at `/warriors/zoya/…`.
+    #[serde(default)]
+    pub mount: Option<String>,
     #[serde(default)]
     pub exclude: Vec<String>,
     #[serde(default)]
@@ -57,8 +63,13 @@ pub fn load(config_path: &Path) -> Result<Vec<SubgraphDecl>> {
                 .as_deref()
                 .map(|v| v.eq_ignore_ascii_case("private"))
                 .unwrap_or(false);
+            let mount = match &entry.mount {
+                Some(m) => m.trim_matches('/').to_string(),
+                None => entry.name.clone(),
+            };
             SubgraphDecl {
                 name: entry.name.clone(),
+                mount,
                 repo_path,
                 exclude_patterns,
                 // No declaring page in the graph — the subgraph's own README

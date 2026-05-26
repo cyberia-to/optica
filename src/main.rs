@@ -360,7 +360,7 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
 
     if !subgraph_decls.is_empty() {
         let subgraph_namespaces: Vec<String> =
-            subgraph_decls.iter().map(|d| d.name.clone()).collect();
+            subgraph_decls.iter().map(|d| d.mount.clone()).filter(|m| !m.is_empty()).collect();
         let evicted = optica::scanner::subgraph::enforce_namespace_monopoly(
             &mut parsed_pages,
             &subgraph_namespaces,
@@ -532,7 +532,7 @@ fn check_site(config: &SiteConfig, subgraphs_override: Option<&Path>) -> Result<
     let subgraph_decls = optica::scanner::subgraph::load_subgraph_decls(subgraphs_override)?;
     if !subgraph_decls.is_empty() {
         let subgraph_namespaces: Vec<String> =
-            subgraph_decls.iter().map(|d| d.name.clone()).collect();
+            subgraph_decls.iter().map(|d| d.mount.clone()).filter(|m| !m.is_empty()).collect();
         let evicted = optica::scanner::subgraph::enforce_namespace_monopoly(
             &mut parsed_pages,
             &subgraph_namespaces,

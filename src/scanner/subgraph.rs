@@ -20,6 +20,9 @@ pub type SubgraphParseCache = HashMap<PathBuf, (SystemTime, ParsedPage)>;
 #[derive(Debug, Clone)]
 pub struct SubgraphDecl {
     pub name: String,
+    /// URL mount prefix for all pages in this subgraph.
+    /// Empty string = root-mounted (no prefix). Defaults to `name`.
+    pub mount: String,
     pub repo_path: PathBuf,
     pub exclude_patterns: Vec<String>,
     pub declaring_page_id: PageId,
@@ -390,7 +393,7 @@ pub fn scan_subgraph(decl: &SubgraphDecl) -> Result<Vec<DiscoveredFile>> {
             } else {
                 &decl.repo_path
             };
-            let name = subgraph_page_name(&path, base, &decl.name);
+            let name = subgraph_page_name(&path, base, &decl.mount);
             files.push(DiscoveredFile {
                 path,
                 kind: FileKind::Page,
@@ -398,7 +401,7 @@ pub fn scan_subgraph(decl: &SubgraphDecl) -> Result<Vec<DiscoveredFile>> {
                 subgraph: Some(decl.name.clone()),
             });
         } else {
-            let name = subgraph_file_name(&path, &decl.repo_path, &decl.name);
+            let name = subgraph_file_name(&path, &decl.repo_path, &decl.mount);
             files.push(DiscoveredFile {
                 path,
                 kind: FileKind::File,
@@ -413,38 +416,50 @@ pub fn scan_subgraph(decl: &SubgraphDecl) -> Result<Vec<DiscoveredFile>> {
 
 /// Derive page name for a markdown file in a subgraph.
 /// README.md at any level becomes the directory's page.
-/// e.g., ~/git/trident/README.md         → "trident"
-/// e.g., ~/git/trident/docs/README.md    → "trident/docs"
-/// e.g., ~/git/trident/src/README.md     → "trident/src"
-/// e.g., ~/git/trident/docs/explanation/vision.md → "trident/docs/explanation/vision"
-fn subgraph_page_name(path: &Path, repo_root: &Path, subgraph_name: &str) -> String {
+/// `mount` is the URL prefix for this subgraph; empty string means root-mounted.
+///
+/// e.g., mount="trident", ~/git/trident/README.md         → "trident"
+/// e.g., mount="trident", ~/git/trident/docs/README.md    → "trident/docs"
+/// e.g., mount="",        ~/git/crystal/README.md          → ""   (root page)
+/// e.g., mount="",        ~/git/crystal/cyber/README.md    → "cyber"
+/// e.g., mount="w/zoya",  ~/git/zoya/README.md             → "w/zoya"
+fn subgraph_page_name(path: &Path, repo_root: &Path, mount: &str) -> String {
     let relative = path.strip_prefix(repo_root).unwrap_or(path);
     let stem = relative.with_extension("");
     let name = stem.to_string_lossy();
 
     // README at any level becomes the parent directory's page
     if name.eq_ignore_ascii_case("README") {
-        return subgraph_name.to_string();
+        return mount.to_string();
     }
     if let Some(parent) = name.strip_suffix("/README").or_else(|| name.strip_suffix("/readme")) {
-        return format!("{}/{}", subgraph_name, parent);
+        return join_mount(mount, parent);
     }
     // Case-insensitive check for README as last component
     let last = name.rsplit('/').next().unwrap_or(&name);
     if last.eq_ignore_ascii_case("README") {
         let parent = &name[..name.len() - last.len() - 1];
-        return format!("{}/{}", subgraph_name, parent);
+        return join_mount(mount, parent);
     }
 
-    format!("{}/{}", subgraph_name, name)
+    join_mount(mount, &name)
 }
 
 /// Derive file name for a non-markdown file in a subgraph (preserves extension).
-/// e.g., ~/git/trident/src/main.rs → "trident/src/main.rs"
-fn subgraph_file_name(path: &Path, repo_root: &Path, subgraph_name: &str) -> String {
+/// `mount` is the URL prefix; empty string means root-mounted.
+fn subgraph_file_name(path: &Path, repo_root: &Path, mount: &str) -> String {
     let relative = path.strip_prefix(repo_root).unwrap_or(path);
     let name = relative.to_string_lossy().to_string();
-    format!("{}/{}", subgraph_name, name)
+    join_mount(mount, &name)
+}
+
+/// Join a mount prefix with a relative path. Empty mount = no prefix.
+fn join_mount(mount: &str, rel: &str) -> String {
+    if mount.is_empty() {
+        rel.to_string()
+    } else {
+        format!("{}/{}", mount, rel)
+    }
 }
 
 /// Enforce namespace monopoly: remove root pages whose namespace conflicts
