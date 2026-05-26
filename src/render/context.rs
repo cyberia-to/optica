@@ -326,6 +326,49 @@ pub fn build_page_context(
             }
         });
 
+        // For the site root page, also show all top-level public namespace roots
+        // (cyb, cybics, bootloader, etc.) as folder entries — they're mounted at
+        // the URL root rather than under "cyber/", so the normal namespace lookup
+        // misses them entirely.
+        if let Some(ref root_name) = config.site.root_page {
+            let root_id = crate::parser::slugify_page_name(root_name);
+            if page.id == root_id {
+                let existing_urls: std::collections::HashSet<String> = items
+                    .iter()
+                    .filter_map(|item| {
+                        item.get_attr("url").ok()
+                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                    })
+                    .collect();
+
+                // Only include pages tagged with the nav tag — these are the
+                // subgraph roots that appear in the sidebar menu.
+                let nav_tag = config.nav.menu_tag.as_deref().unwrap_or("nav");
+                let mut top_level: Vec<(String, String)> = store
+                    .pages
+                    .iter()
+                    .filter(|(id, p)| {
+                        id.as_str() != page.id.as_str()
+                            && p.meta.tags.iter().any(|t| t.as_str() == nav_tag)
+                            && crate::graph::PageStore::is_page_public(p, &config.content)
+                    })
+                    .map(|(id, p)| (id.clone(), p.meta.title.clone()))
+                    .collect();
+
+                top_level.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+                for (id, title) in top_level {
+                    let url = format!("/{}", id);
+                    if !existing_urls.contains(&url) {
+                        items.push(minijinja::context! {
+                            title => format!("{}/", title),
+                            url => url,
+                        });
+                    }
+                }
+            }
+        }
+
         items
     };
 
