@@ -27,7 +27,7 @@ pub struct SubgraphDecl {
     pub exclude_patterns: Vec<String>,
     pub declaring_page_id: PageId,
     pub is_private: bool,
-    /// When true, optica adds the "menu" tag to this subgraph's root page.
+    /// When true, optica adds the "nav" tag to this subgraph's root page.
     pub menu: bool,
 }
 
@@ -176,8 +176,8 @@ pub fn ingest_subgraph(
                     }
                 }
             }
-            if decl.menu && !page.meta.tags.contains(&"menu".to_string()) {
-                page.meta.tags.push("menu".to_string());
+            if decl.menu && !page.meta.tags.contains(&"nav".to_string()) {
+                page.meta.tags.push("nav".to_string());
             }
         }
         pages.push(page);
