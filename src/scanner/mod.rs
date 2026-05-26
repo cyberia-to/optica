@@ -75,7 +75,11 @@ pub fn scan(input_dir: &Path, content_config: &ContentSection) -> Result<Discove
     let input_dir = input_dir
         .canonicalize()
         .unwrap_or_else(|_| input_dir.to_path_buf());
-    let graph_dir = resolve_dir_chain(&input_dir, &["root", "graph", "pages"]);
+    // When no conventional subdir (root/, graph/, pages/) exists, treat input_dir
+    // itself as the graph dir so flat-layout repos (like the cyber root graph)
+    // have their markdown parsed with frontmatter instead of as raw file nodes.
+    let candidate = resolve_dir_chain(&input_dir, &["root", "graph", "pages"]);
+    let graph_dir = if candidate.exists() { candidate } else { input_dir.clone() };
     let blog_dir = resolve_dir(&input_dir, "blog", "journals");
     let media_dir = input_dir.join("media");
 
