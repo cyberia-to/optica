@@ -39,6 +39,8 @@ pub struct SubgraphEntry {
     pub exclude: Vec<String>,
     #[serde(default)]
     pub visibility: Option<String>,
+    #[serde(default)]
+    pub menu: bool,
 }
 
 pub fn load(config_path: &Path) -> Result<Vec<SubgraphDecl>> {
@@ -77,6 +79,7 @@ pub fn load(config_path: &Path) -> Result<Vec<SubgraphDecl>> {
                 // page will miss gracefully; that is the intended behavior.
                 declaring_page_id: PageId::from(entry.name),
                 is_private,
+                menu: entry.menu,
             }
         })
         .collect();
