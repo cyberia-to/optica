@@ -75,11 +75,7 @@ pub fn scan(input_dir: &Path, content_config: &ContentSection) -> Result<Discove
     let input_dir = input_dir
         .canonicalize()
         .unwrap_or_else(|_| input_dir.to_path_buf());
-    // When no conventional subdir (root/, graph/, pages/) exists, treat input_dir
-    // itself as the graph dir so flat-layout repos (like the cyber root graph)
-    // have their markdown parsed with frontmatter instead of as raw file nodes.
-    let candidate = resolve_dir_chain(&input_dir, &["root", "graph", "pages"]);
-    let graph_dir = if candidate.exists() { candidate } else { input_dir.clone() };
+    let graph_dir = resolve_dir_chain(&input_dir, &["root", "graph", "pages"]);
     let blog_dir = resolve_dir(&input_dir, "blog", "journals");
     let media_dir = input_dir.join("media");
 
@@ -89,6 +85,31 @@ pub fn scan(input_dir: &Path, content_config: &ContentSection) -> Result<Discove
         media: Vec::new(),
         files: Vec::new(),
     };
+
+    // When no conventional subdir exists, register just the root README.md as a
+    // page so the root graph's frontmatter (icon, tags, alias) is parsed.
+    // This lets flat-layout repos (like the cyber root) declare nav membership
+    // without scanning the entire repo as pages.
+    if !graph_dir.exists() {
+        // Use the repo dir name so the README gets an ID matching the root_page config.
+        // e.g., ~/cyber/cyber/README.md → name "cyber" → page ID "cyber"
+        let repo_name = input_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "index".to_string());
+        for readme in &["README.md", "readme.md", "index.md"] {
+            let p = input_dir.join(readme);
+            if p.exists() {
+                result.pages.push(DiscoveredFile {
+                    path: p,
+                    kind: FileKind::Page,
+                    name: repo_name.clone(),
+                    subgraph: None,
+                });
+                break;
+            }
+        }
+    }
 
     // Scan graph directory — markdown files become Pages, everything else becomes Files
     if graph_dir.exists() {
