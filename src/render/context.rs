@@ -74,15 +74,21 @@ fn resolve_nav_menu_from_tag(tag: &str, store: &PageStore) -> Vec<Value> {
         .collect()
 }
 
-/// Capitalize the first letter of each word.
+/// Capitalize the first letter of each word. Hyphenated words are rendered
+/// with a bullet separator and each segment capitalized: "cyber-valley" → "Cyber•Valley".
 fn title_case(s: &str) -> String {
     s.split_whitespace()
         .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-                None => String::new(),
-            }
+            word.split('-')
+                .map(|segment| {
+                    let mut chars = segment.chars();
+                    match chars.next() {
+                        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+                        None => String::new(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("•")
         })
         .collect::<Vec<_>>()
         .join(" ")
