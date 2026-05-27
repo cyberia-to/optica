@@ -266,10 +266,12 @@ pub fn build_page_context(
     let reading_time = (word_count as f64 / 200.0).ceil() as usize;
 
     let children: Vec<Value> = {
-        // Any page can be a namespace parent — check by its title
-        let page_name_lower = page.meta.title.to_lowercase();
+        // Use the page ID (slugified) as the namespace key, not the title.
+        // Titles can differ from slugs ("Cyber Valley" vs "cyber-valley"),
+        // causing namespace_tree lookups to miss all children.
+        let page_name_lower = page.id.clone();
 
-        // Direct children (pages whose namespace == this page's name)
+        // Direct children (pages whose namespace == this page's id)
         let mut items: Vec<Value> = store
             .get_namespace_children(&page_name_lower)
             .iter()
