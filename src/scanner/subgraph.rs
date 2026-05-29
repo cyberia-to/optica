@@ -289,6 +289,14 @@ pub fn ingest_subgraph_cached(
                     }
                 }
             }
+            if decl.menu {
+                if !page.meta.tags.contains(&"nav".to_string()) {
+                    page.meta.tags.push("nav".to_string());
+                }
+                if page.meta.menu_order.is_none() {
+                    page.meta.menu_order = decl.menu_order;
+                }
+            }
         }
         pages.push(page);
     }
