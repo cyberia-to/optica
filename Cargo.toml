@@ -41,6 +41,7 @@ rss = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
 slug = "0.1"
 regex = "1"
+svgbob = "0.7"
 lazy_static = "1"
 rayon = "1.10"
 colored = "2"

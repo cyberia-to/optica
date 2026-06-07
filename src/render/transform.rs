@@ -7,7 +7,7 @@ use crate::graph::PageStore;
 use crate::parser::slugify_page_name;
 use comrak::{
     arena_tree::Node,
-    nodes::{Ast, AstNode, NodeValue},
+    nodes::{Ast, AstNode, NodeHtmlBlock, NodeValue},
     plugins::syntect::SyntectAdapterBuilder,
     Arena, Options, Plugins,
 };
@@ -254,6 +254,9 @@ pub fn render_markdown_with_source(
     // Add heading IDs for TOC anchors
     inject_heading_ids(root, &arena);
 
+    // Render svgbob fences to inline SVG before syntect sees them
+    render_svgbob_blocks(root);
+
     // Render to HTML with syntax highlighting (CSS class mode — no inline styles)
     let adapter = SyntectAdapterBuilder::new()
         .css()
@@ -382,6 +385,30 @@ fn resolve_embeds_and_refs(markdown: &str, store: &PageStore, depth: usize) -> S
             }
         })
         .to_string()
+}
+
+/// Replace ```svgbob fenced code blocks with inline SVG before HTML rendering.
+/// Runs before the syntect adapter so svgbob ASCII art never hits syntax highlighting.
+fn render_svgbob_blocks<'a>(root: &'a AstNode<'a>) {
+    let mut to_replace: Vec<(&'a AstNode<'a>, String)> = Vec::new();
+
+    for node in root.descendants() {
+        let data = node.data.borrow();
+        if let NodeValue::CodeBlock(ref block) = data.value {
+            if block.info.trim() == "svgbob" {
+                to_replace.push((node, block.literal.clone()));
+            }
+        }
+    }
+
+    for (node, literal) in to_replace {
+        let svg = svgbob::to_svg_string_compressed(&literal);
+        let html = format!("<figure class=\"svgbob\">\n{}\n</figure>\n", svg);
+        node.data.borrow_mut().value = NodeValue::HtmlBlock(NodeHtmlBlock {
+            block_type: 6,
+            literal: html,
+        });
+    }
 }
 
 fn transform_wikilinks<'a>(
