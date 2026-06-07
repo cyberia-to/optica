@@ -401,8 +401,19 @@ fn render_svgbob_blocks<'a>(root: &'a AstNode<'a>) {
         }
     }
 
+    // Render with `currentColor` strokes/fills and a transparent backdrop so the
+    // diagram inherits the page's text color instead of svgbob's hardcoded
+    // black-on-white. This makes the SVG theme-adaptive (dark or light).
+    let settings = svgbob::Settings {
+        background: "transparent".into(),
+        stroke_color: "currentColor".into(),
+        fill_color: "currentColor".into(),
+        include_backdrop: false,
+        ..Default::default()
+    };
+
     for (node, literal) in to_replace {
-        let svg = svgbob::to_svg_string_compressed(&literal);
+        let svg = svgbob::to_svg_with_settings(&literal, &settings);
         let html = format!("<figure class=\"svgbob\">\n{}\n</figure>\n", svg);
         node.data.borrow_mut().value = NodeValue::HtmlBlock(NodeHtmlBlock {
             block_type: 6,

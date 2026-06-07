@@ -257,6 +257,27 @@ code {
     border-radius: 3px;
 }
 
+/* svgbob diagrams — inherit page text color, transparent backdrop.
+   The SVG is rendered with currentColor strokes/fills (see render_svgbob_blocks),
+   so setting color here themes the whole diagram. */
+figure.svgbob {
+    margin: 1.5em 0;
+    color: var(--color-text);
+    text-align: center;
+}
+
+figure.svgbob svg {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Arrow-head markers have no svgbob class, so they fall back to the SVG
+   default black fill — force them to currentColor. The .nofill/.bg_filled
+   classes keep higher specificity, so unfilled shapes stay transparent. */
+figure.svgbob svg polygon {
+    fill: currentColor;
+}
+
 /* Code blocks — frameless, same background as page */
 pre,
 pre.syntax-highlighting {
