@@ -225,7 +225,7 @@ pub fn render_markdown_with_source(
     source_subgraph: Option<&str>,
 ) -> RenderResult {
     // Pre-process: resolve embeds and block references in the markdown source
-    let processed = resolve_embeds_and_refs(markdown, store, 0);
+    let processed = resolve_embeds_and_refs(markdown, store, source_namespace, source_subgraph, 0);
 
     // Pre-process: resolve query blocks
     let processed = crate::query::resolve_queries(&processed, store);
@@ -236,6 +236,10 @@ pub fn render_markdown_with_source(
 
     // Protect math blocks from comrak processing
     let (processed, math_blocks) = extract_math_blocks(&processed);
+
+    // Strip `^block-id` anchors so they never render as literal text. Runs after
+    // math extraction so `\sum ^N` and similar superscripts are already protected.
+    let processed = strip_block_markers(&processed);
 
     let arena = Arena::new();
     let options = setup_comrak_options();
@@ -315,6 +319,22 @@ lazy_static::lazy_static! {
     static ref EMBED_PAGE_RE: Regex = Regex::new(
         r"\{\{embed\s+\[\[([^\]]+)\]\]\s*\}\}"
     ).unwrap();
+
+    /// Matches a trailing Obsidian-style block marker `^block-id` at end of a
+    /// line (preceded by whitespace or starting the line). These are anchors for
+    /// `{{embed [[Page#^id]]}}`, not content, so they are stripped before render.
+    static ref BLOCK_MARKER_RE: Regex = Regex::new(
+        r"(?m)(?:[ \t]+|^)\^[A-Za-z0-9][A-Za-z0-9_-]*[ \t]*$"
+    ).unwrap();
+}
+
+/// Remove trailing `^block-id` markers from rendered source so they don't appear
+/// as literal text on the page that defines them.
+fn strip_block_markers(markdown: &str) -> String {
+    if !markdown.contains('^') {
+        return markdown.to_string();
+    }
+    BLOCK_MARKER_RE.replace_all(markdown, "").to_string()
 }
 
 /// Resolve {{embed [[Page]]}} in markdown.
@@ -356,7 +376,13 @@ fn resolve_wikilinks_in_code(html: &str, store: &PageStore) -> String {
     }).to_string()
 }
 
-fn resolve_embeds_and_refs(markdown: &str, store: &PageStore, depth: usize) -> String {
+fn resolve_embeds_and_refs(
+    markdown: &str,
+    store: &PageStore,
+    source_namespace: Option<&str>,
+    source_subgraph: Option<&str>,
+    depth: usize,
+) -> String {
     if depth > 3 {
         return markdown.to_string();
     }
@@ -366,25 +392,167 @@ fn resolve_embeds_and_refs(markdown: &str, store: &PageStore, depth: usize) -> S
         return markdown.to_string();
     }
 
-    // Resolve {{embed [[Page Name]]}} → inline the page's content
+    // Resolve {{embed [[Page Name]]}} → inline the page's content.
+    // The target may carry a `#fragment`:
+    //   {{embed [[Page]]}}            → whole page
+    //   {{embed [[Page#Heading]]}}    → section under that heading
+    //   {{embed [[Page#^block-id]]}}  → single block tagged `^block-id`
     EMBED_PAGE_RE
         .replace_all(markdown, |caps: &regex::Captures| {
-            let page_name = &caps[1];
-            let slug = slugify_page_name(page_name);
-            if let Some(page) = store.pages.get(&slug) {
-                let content = resolve_embeds_and_refs(&page.content_md, store, depth + 1);
-                format!(
-                    "\n<div class=\"embed embed-page\" data-page=\"{}\">\n<div class=\"embed-header\"><a href=\"/{}\" class=\"internal-link\">{}</a></div>\n\n{}\n\n</div>\n",
-                    slug, slug, page.meta.title, content
-                )
-            } else {
-                format!(
+            // Split the wikilink target on the first `#` into page + fragment.
+            let raw = caps[1].trim();
+            let (page_name, fragment) = match raw.split_once('#') {
+                Some((p, f)) => (p.trim(), Some(f.trim())),
+                None => (raw, None),
+            };
+            // Resolve the page id the same way wikilinks do — exact match, alias,
+            // then namespace/basename fallback — so `[[languages]]` from
+            // `soft3/docs` finds `soft3/specs/languages`.
+            let slug = crate::graph::links::resolve_link(
+                page_name,
+                source_namespace,
+                source_subgraph,
+                store,
+            );
+
+            let Some(page) = store.pages.get(&slug) else {
+                return format!(
                     "<div class=\"embed embed-page embed-missing\"><em>Embed: page \"{}\" not found</em></div>",
                     page_name
-                )
-            }
+                );
+            };
+
+            // Select the source markdown to inline: whole page, a section, or a block.
+            let (source, anchor, label) = match fragment {
+                None => (page.content_md.clone(), String::new(), page.meta.title.clone()),
+                Some(frag) => {
+                    // Block refs keep the page title in the header; section refs
+                    // add a `title › section` breadcrumb and anchor the link.
+                    let extracted = if let Some(block_id) = frag.strip_prefix('^') {
+                        extract_block(&page.content_md, block_id.trim())
+                            .map(|s| (s, String::new(), page.meta.title.clone()))
+                    } else {
+                        let heading_slug = slug::slugify(frag);
+                        extract_section(&page.content_md, &heading_slug).map(|s| {
+                            (
+                                s,
+                                format!("#{}", heading_slug),
+                                format!("{} › {}", page.meta.title, frag),
+                            )
+                        })
+                    };
+                    match extracted {
+                        Some((s, anchor, label)) => (s, anchor, label),
+                        None => {
+                            return format!(
+                                "<div class=\"embed embed-page embed-missing\"><em>Embed: \"{}#{}\" not found</em></div>",
+                                page_name, frag
+                            );
+                        }
+                    }
+                }
+            };
+
+            // Nested embeds inside the inlined page resolve relative to that
+            // page's own namespace/subgraph, not the embedding page's.
+            let content = resolve_embeds_and_refs(
+                &source,
+                store,
+                page.namespace.as_deref(),
+                page.subgraph.as_deref(),
+                depth + 1,
+            );
+            format!(
+                "\n<div class=\"embed embed-page\" data-page=\"{}\">\n<div class=\"embed-header\"><a href=\"/{}{}\" class=\"internal-link\">{}</a></div>\n\n{}\n\n</div>\n",
+                slug, slug, anchor, label, content
+            )
         })
         .to_string()
+}
+
+/// Length of the leading ATX heading marker (`#`..`######` followed by a space),
+/// or `None` if the line is not a heading. The returned value is the heading
+/// level (1–6); slice `line[level + 1..]` to get the heading text.
+fn heading_level(line: &str) -> Option<usize> {
+    let hashes = line.bytes().take_while(|&b| b == b'#').count();
+    if (1..=6).contains(&hashes) && line.as_bytes().get(hashes) == Some(&b' ') {
+        Some(hashes)
+    } else {
+        None
+    }
+}
+
+/// Slice the markdown section whose heading slug matches `target_slug`: from the
+/// matching heading through to (but not including) the next heading of the same
+/// or higher level. The heading line itself is included. Fenced code blocks are
+/// skipped so a `#` comment inside ``` is never mistaken for a heading.
+fn extract_section(markdown: &str, target_slug: &str) -> Option<String> {
+    let lines: Vec<&str> = markdown.lines().collect();
+    let mut in_fence = false;
+    let mut start: Option<(usize, usize)> = None; // (line index, heading level)
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let Some(level) = heading_level(trimmed) else {
+            continue;
+        };
+        let text = trimmed[level + 1..].trim();
+        match start {
+            None => {
+                if slug::slugify(text) == target_slug {
+                    start = Some((i, level));
+                }
+            }
+            Some((s, start_level)) => {
+                if level <= start_level {
+                    return Some(lines[s..i].join("\n").trim_end().to_string());
+                }
+            }
+        }
+    }
+
+    start.map(|(s, _)| lines[s..].join("\n").trim_end().to_string())
+}
+
+/// Extract a single block tagged with an Obsidian-style `^block-id` marker at the
+/// end of a line. Returns the whole containing paragraph (contiguous non-blank
+/// lines) with the marker stripped.
+fn extract_block(markdown: &str, block_id: &str) -> Option<String> {
+    let marker = format!("^{}", block_id);
+    let lines: Vec<&str> = markdown.lines().collect();
+
+    // Find the line whose trimmed end is exactly the marker or ends with ` ^id`.
+    let idx = lines.iter().position(|line| {
+        let t = line.trim_end();
+        t == marker || t.strip_suffix(&marker).is_some_and(|p| p.ends_with(char::is_whitespace))
+    })?;
+
+    // Walk up to the paragraph start (preceding blank line or top of file).
+    let mut start = idx;
+    while start > 0 && !lines[start - 1].trim().is_empty() {
+        start -= 1;
+    }
+
+    let mut block: Vec<String> = lines[start..=idx].iter().map(|s| s.to_string()).collect();
+    if let Some(last) = block.last_mut() {
+        let t = last.trim_end();
+        *last = t[..t.len() - marker.len()].trim_end().to_string();
+    }
+    // A bare-marker line collapses to empty; drop trailing empties.
+    while block.last().is_some_and(|l| l.trim().is_empty()) {
+        block.pop();
+    }
+    if block.is_empty() {
+        return None;
+    }
+    Some(block.join("\n"))
 }
 
 /// Replace ```svgbob fenced code blocks with inline SVG before HTML rendering.
@@ -576,6 +744,10 @@ mod tests {
     }
 
     fn store_with_page(name: &str) -> PageStore {
+        store_with_content(name, "")
+    }
+
+    fn store_with_content(name: &str, content: &str) -> PageStore {
         let page = ParsedPage {
             id: slugify_page_name(name),
             meta: PageMeta {
@@ -593,7 +765,7 @@ mod tests {
             source_path: PathBuf::new(),
             namespace: None,
             subgraph: None,
-            content_md: String::new(),
+            content_md: content.to_string(),
             outgoing_links: vec![],
         };
         build_graph(vec![page]).unwrap()
@@ -606,6 +778,96 @@ mod tests {
         assert!(result.html.contains("<h1>"));
         assert!(result.html.contains("Hello"));
         assert!(result.html.contains("<p>World</p>"));
+    }
+
+    #[test]
+    fn test_embed_whole_page() {
+        let store = store_with_content("Languages", "intro\n\n## the roster\n\n| a | b |\n\n## other\n\ntail");
+        let out = resolve_embeds_and_refs("{{embed [[Languages]]}}", &store, None, None, 0);
+        assert!(out.contains("intro"));
+        assert!(out.contains("the roster"));
+        assert!(out.contains("tail"));
+    }
+
+    #[test]
+    fn test_embed_section() {
+        let store = store_with_content(
+            "Languages",
+            "intro text\n\n## the roster\n\n| a | b |\n| 1 | 2 |\n\n## other section\n\nignored tail",
+        );
+        let out = resolve_embeds_and_refs("{{embed [[Languages#the roster]]}}", &store, None, None, 0);
+        assert!(out.contains("## the roster"), "section heading included: {out}");
+        assert!(out.contains("| 1 | 2 |"), "section body included");
+        assert!(!out.contains("intro text"), "earlier content excluded");
+        assert!(!out.contains("ignored tail"), "next section excluded");
+        assert!(out.contains("/languages#the-roster"), "header anchors the section");
+    }
+
+    #[test]
+    fn test_embed_section_stops_at_same_level() {
+        // A deeper heading inside the section must NOT terminate it.
+        let store = store_with_content(
+            "Doc",
+            "## one\n\nA\n\n### one-sub\n\nB\n\n## two\n\nC",
+        );
+        let out = resolve_embeds_and_refs("{{embed [[Doc#one]]}}", &store, None, None, 0);
+        assert!(out.contains("### one-sub"), "nested subsection kept");
+        assert!(out.contains("B"));
+        assert!(!out.contains("\nC"), "sibling section excluded");
+    }
+
+    #[test]
+    fn test_embed_section_ignores_fenced_hash() {
+        let store = store_with_content(
+            "Doc",
+            "## real\n\n```sh\n# not a heading\n```\n\nbody\n\n## next\n\nnope",
+        );
+        let out = resolve_embeds_and_refs("{{embed [[Doc#real]]}}", &store, None, None, 0);
+        assert!(out.contains("# not a heading"), "fenced hash preserved in section");
+        assert!(out.contains("body"));
+        assert!(!out.contains("nope"), "next section excluded despite fenced hash");
+    }
+
+    #[test]
+    fn test_embed_block() {
+        let store = store_with_content(
+            "Doc",
+            "first para\n\nthe canonical claim spanning\ntwo lines ^claim1\n\nafter",
+        );
+        let out = resolve_embeds_and_refs("{{embed [[Doc#^claim1]]}}", &store, None, None, 0);
+        assert!(out.contains("the canonical claim spanning"), "block start included");
+        assert!(out.contains("two lines"), "full paragraph included");
+        assert!(!out.contains("^claim1"), "block marker stripped");
+        assert!(!out.contains("first para"), "earlier paragraph excluded");
+        assert!(!out.contains("after"), "later paragraph excluded");
+    }
+
+    #[test]
+    fn test_block_marker_stripped_on_source_page() {
+        let store = empty_store();
+        let result = render_markdown(
+            "a claim worth citing ^claim1\n\nnext para",
+            &store,
+            TEST_THEME,
+        );
+        assert!(result.html.contains("a claim worth citing"));
+        assert!(!result.html.contains("^claim1"), "marker hidden: {}", result.html);
+    }
+
+    #[test]
+    fn test_block_marker_strip_leaves_superscript_alone() {
+        // A mid-line caret (exponent) must survive; only end-of-line anchors go.
+        let store = empty_store();
+        let result = render_markdown("the value 2^3 equals eight", &store, TEST_THEME);
+        assert!(result.html.contains("2^3"), "inline caret preserved: {}", result.html);
+    }
+
+    #[test]
+    fn test_embed_missing_fragment() {
+        let store = store_with_content("Doc", "## present\n\nx");
+        let out = resolve_embeds_and_refs("{{embed [[Doc#absent]]}}", &store, None, None, 0);
+        assert!(out.contains("embed-missing"));
+        assert!(out.contains("Doc#absent"));
     }
 
     #[test]
