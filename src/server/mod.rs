@@ -8,6 +8,7 @@ mod reload;
 use crate::config::SiteConfig;
 use anyhow::Result;
 use colored::Colorize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -24,6 +25,22 @@ pub fn serve(
     let output_dir = config.build.output_dir.clone();
     let addr = format!("{}:{}", bind, port);
     let url = format!("http://{}", addr);
+
+    // Map subgraph name → mount URL so a bare `/cybergraph` can 301 to the
+    // subgraph's real mount (`/soft3/cybergraph`) even when the name also exists
+    // as a concept page elsewhere in the graph.
+    let subgraph_mounts: Arc<HashMap<String, String>> = Arc::new(
+        subgraphs
+            .and_then(|p| crate::scanner::subgraph_config::load(p).ok())
+            .map(|decls| {
+                decls
+                    .into_iter()
+                    .filter(|d| !d.mount.is_empty())
+                    .map(|d| (crate::parser::slugify_page_name(&d.name), format!("/{}", d.mount)))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    );
 
     println!(
         "{} {} → {}",
@@ -91,8 +108,9 @@ pub fn serve(
                     // This prevents serialized request handling from blocking concurrent loads.
                     let dir = output_dir.clone();
                     let v = build_version.clone();
+                    let mounts = subgraph_mounts.clone();
                     std::thread::spawn(move || {
-                        handle_request(request, &dir, live_reload, &v);
+                        handle_request(request, &dir, live_reload, &v, &mounts);
                     });
                 }
             }
@@ -146,6 +164,7 @@ fn handle_request(
     output_dir: &Path,
     inject_reload: bool,
     build_version: &AtomicU64,
+    subgraph_mounts: &HashMap<String, String>,
 ) {
     let url_path = request.url().to_string();
     let url_path = url_path.split('?').next().unwrap_or(&url_path);
@@ -226,6 +245,15 @@ fn handle_request(
             );
         }
         let _ = request.respond(response);
+    } else if let Some(target) = resolve_basename_redirect(url_path, output_dir, subgraph_mounts) {
+        // A bare path like `/cybergraph` doesn't exist on disk because the page
+        // lives under a namespace (`/soft3/cybergraph`). Resolve the basename to
+        // the unique nested page and 301 there — the same basename fallback
+        // wikilinks use, so typing `/cybergraph` lands on the real page.
+        let response = tiny_http::Response::empty(301)
+            .with_header(tiny_http::Header::from_bytes(b"Location", target.as_bytes()).unwrap())
+            .with_header(tiny_http::Header::from_bytes(b"Connection", b"close").unwrap());
+        let _ = request.respond(response);
     } else {
         let response = tiny_http::Response::from_string("404 Not Found")
             .with_status_code(404)
@@ -233,6 +261,70 @@ fn handle_request(
             .with_header(tiny_http::Header::from_bytes(b"Connection", b"close").unwrap());
         let _ = request.respond(response);
     }
+}
+
+/// When a request path has no file on disk, treat its last segment as a page
+/// basename and look for a unique nested page directory with that name (one
+/// holding an `index.html`). Returns the canonical URL to redirect to, or
+/// `None` if there is no match or the match is ambiguous (more than one).
+///
+/// This mirrors the wikilink resolver: `[[cybergraph]]` already routes to
+/// `/soft3/cybergraph`, so a manually-typed `/cybergraph` should too.
+fn resolve_basename_redirect(
+    url_path: &str,
+    output_dir: &Path,
+    subgraph_mounts: &HashMap<String, String>,
+) -> Option<String> {
+    let slug = url_path.trim_matches('/');
+    // Only single-segment bare slugs are eligible — a multi-segment path that
+    // missed is a genuine 404, not a namespace shorthand.
+    if slug.is_empty() || slug.contains('/') {
+        return None;
+    }
+
+    // First choice: the slug names a subgraph. Redirect to its mount — this is
+    // unambiguous even when the same name appears as a concept page elsewhere.
+    if let Some(mount) = subgraph_mounts.get(slug) {
+        if output_dir.join(mount.trim_start_matches('/')).join("index.html").exists() {
+            return Some(mount.clone());
+        }
+    }
+
+    // Collect every nested page directory whose basename matches, then prefer the
+    // shallowest (fewest path segments) — the subgraph root `soft3/cybergraph`
+    // beats a deep spec page `soft3/cybergraph/specs/cybergraph`. A tie at the
+    // shallowest depth is genuinely ambiguous, so don't guess.
+    let mut best: Option<(usize, String)> = None;
+    let mut tie_at_best = false;
+    for entry in walkdir::WalkDir::new(output_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_dir() || entry.file_name() != std::ffi::OsStr::new(slug) {
+            continue;
+        }
+        if !entry.path().join("index.html").exists() {
+            continue;
+        }
+        let Ok(rel) = entry.path().strip_prefix(output_dir) else {
+            continue;
+        };
+        let depth = rel.components().count();
+        let url = format!("/{}", rel.to_string_lossy());
+        match &best {
+            Some((d, _)) if depth > *d => {}
+            Some((d, _)) if depth == *d => tie_at_best = true,
+            _ => {
+                best = Some((depth, url));
+                tie_at_best = false;
+            }
+        }
+    }
+
+    if tie_at_best {
+        return None;
+    }
+    best.map(|(_, url)| url)
 }
 
 fn resolve_file_path(url_path: &str, output_dir: &Path) -> PathBuf {
