@@ -76,6 +76,7 @@ pub fn scan(input_dir: &Path, content_config: &ContentSection) -> Result<Discove
         .canonicalize()
         .unwrap_or_else(|_| input_dir.to_path_buf());
     let graph_dir = resolve_dir_chain(&input_dir, &["root", "graph", "pages"]);
+    let flat_root = !graph_dir.exists();
     let blog_dir = resolve_dir(&input_dir, "blog", "journals");
     let media_dir = input_dir.join("media");
 
@@ -139,6 +140,59 @@ pub fn scan(input_dir: &Path, content_config: &ContentSection) -> Result<Discove
                     subgraph: None,
                 });
             }
+        }
+    } else {
+        // Flat-layout root (no root/graph/pages dir): scan the repo's own
+        // markdown as Pages so a flat content repo (the cyber root) renders
+        // as real pages instead of raw file dumps. The root README is already
+        // registered above with the repo name; skip it here to avoid a dup.
+        let skip_dirs: std::collections::HashSet<&str> =
+            [".git", "target", "node_modules", "build"].into();
+        for entry in WalkDir::new(&input_dir)
+            .into_iter()
+            .filter_entry(|e| {
+                if e.file_type().is_dir() {
+                    let name = e.file_name().to_string_lossy();
+                    !skip_dirs.contains(name.as_ref())
+                } else {
+                    true
+                }
+            })
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+        {
+            let path = entry.path().to_path_buf();
+            if path.starts_with(&blog_dir) || path.starts_with(&media_dir) {
+                continue;
+            }
+            // Only real markdown becomes a Page; everything else falls through
+            // to the generic file scan below.
+            let is_md = path
+                .extension()
+                .map(|e| e == "md" || e == "markdown")
+                .unwrap_or(false);
+            if !is_md {
+                continue;
+            }
+            if classify::is_excluded(&path, &input_dir, &content_config.exclude_patterns) {
+                continue;
+            }
+            let fname = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_ascii_lowercase())
+                .unwrap_or_default();
+            if (fname == "readme.md" || fname == "index.md")
+                && path.parent() == Some(input_dir.as_path())
+            {
+                continue;
+            }
+            let name = classify::page_name_from_path(&path, &input_dir);
+            result.pages.push(DiscoveredFile {
+                path,
+                kind: FileKind::Page,
+                name,
+                subgraph: None,
+            });
         }
     }
 
@@ -217,6 +271,16 @@ pub fn scan(input_dir: &Path, content_config: &ContentSection) -> Result<Discove
         if path.starts_with(&graph_dir)
             || path.starts_with(&blog_dir)
             || path.starts_with(&media_dir)
+        {
+            continue;
+        }
+
+        // In flat-layout roots, markdown was already taken as Pages above.
+        if flat_root
+            && path
+                .extension()
+                .map(|e| e == "md" || e == "markdown")
+                .unwrap_or(false)
         {
             continue;
         }
