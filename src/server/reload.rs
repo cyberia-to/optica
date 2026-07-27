@@ -189,11 +189,23 @@ fn watch_and_rebuild_loop(
         })
         .map_err(|e| anyhow::anyhow!("Failed to create file watcher: {}", e))?;
 
-    // Watch graph directory (primary: "root", fallback: "graph", then "pages")
+    // Watch graph directory (primary: "root", fallback: "graph", then "pages").
+    // Flat layout: when none of those exist, pages live at the workspace root
+    // itself — watch input_dir directly. The changed-path filter below drops
+    // build-output events so this cannot feed back.
     let graph_dir = {
         let root = config.build.input_dir.join("root");
         let graph = config.build.input_dir.join("graph");
-        if root.exists() { root } else if graph.exists() { graph } else { config.build.input_dir.join("pages") }
+        let pages = config.build.input_dir.join("pages");
+        if root.exists() {
+            root
+        } else if graph.exists() {
+            graph
+        } else if pages.exists() {
+            pages
+        } else {
+            config.build.input_dir.clone()
+        }
     };
     // Watch blog directory (primary: "blog", fallback: "journals")
     let blog_dir = {
@@ -203,8 +215,9 @@ fn watch_and_rebuild_loop(
 
     if graph_dir.exists() {
         watcher.watch(&graph_dir, notify::RecursiveMode::Recursive)?;
+        eprintln!("  {} Watching graph: {}", "Watch".dimmed(), graph_dir.display());
     }
-    if blog_dir.exists() {
+    if blog_dir.exists() && !blog_dir.starts_with(&graph_dir) {
         watcher.watch(&blog_dir, notify::RecursiveMode::Recursive)?;
     }
 
@@ -358,6 +371,15 @@ fn watch_and_rebuild_loop(
         cache.initialized = true;
     }
 
+    // Canonical forms for the feedback-loop guard: with a flat-layout root the
+    // build output lives INSIDE the watched directory, and a directory-level
+    // FSEvent for the output dir itself ("…/build", no trailing slash) slips
+    // past the "/build/" substring filter — rebuild → write → event → rebuild.
+    let input_canon = config.build.input_dir.canonicalize()
+        .unwrap_or_else(|_| config.build.input_dir.clone());
+    let output_canon = config.build.output_dir.canonicalize()
+        .unwrap_or_else(|_| config.build.output_dir.clone());
+
     loop {
         if let Ok(paths) = rx.recv() {
             // Debounce: wait 100ms and collect all changed paths
@@ -371,10 +393,13 @@ fn watch_and_rebuild_loop(
             // Accept any file (not just .md) — the scanner handles file type classification.
             changed.retain(|p| {
                 let path_str = p.to_string_lossy();
+                let canon = p.canonicalize().unwrap_or_else(|_| p.clone());
                 !path_str.contains("/.git/")
                     && !path_str.contains("/target/")
                     && !path_str.contains("/node_modules/")
                     && !path_str.contains("/build/")
+                    && !canon.starts_with(&output_canon)
+                    && canon != input_canon
             });
 
             if changed.is_empty() {
