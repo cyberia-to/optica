@@ -6,6 +6,13 @@
 use comrak::nodes::{AstNode, NodeValue};
 use serde::Serialize;
 
+/// The sentinel `transform.rs` substitutes for `|` inside `[[...]]` before
+/// comrak parses (protecting wikilinks from the table parser). Heading text
+/// extraction must undo it: TOC runs on the pre-transform AST, where an
+/// aliased wikilink is a single `WikiLink` node whose text still carries the
+/// placeholder (`cybics/form\u{FFFF}form`).
+pub(crate) const PIPE_PLACEHOLDER: char = '\u{FFFF}';
+
 /// A table of contents entry extracted from headings.
 #[derive(Debug, Clone, Serialize)]
 pub struct TocEntry {
@@ -21,7 +28,7 @@ pub fn extract_toc<'a>(root: &'a AstNode<'a>) -> Vec<TocEntry> {
     for node in root.descendants() {
         let data = node.data.borrow();
         if let NodeValue::Heading(ref heading) = data.value {
-            let text = get_text_content(node);
+            let text = heading_text(node);
             if !text.is_empty() {
                 let id = slug::slugify(&text);
                 entries.push(TocEntry {
@@ -36,14 +43,24 @@ pub fn extract_toc<'a>(root: &'a AstNode<'a>) -> Vec<TocEntry> {
     entries
 }
 
-fn get_text_content<'a>(node: &'a AstNode<'a>) -> String {
+/// The display text of a heading on the pre-transform AST — what the reader
+/// will see once wikilinks are resolved. `[[target|alias]]` contributes only
+/// `alias`; `[[target]]` contributes `target` (matching `transform_wikilinks`'
+/// display rules). Used by both TOC extraction and heading-anchor injection so
+/// TOC hrefs and heading ids always agree.
+pub(crate) fn heading_text<'a>(node: &'a AstNode<'a>) -> String {
     let mut text = String::new();
     for child in node.children() {
         let data = child.data.borrow();
         match &data.value {
             NodeValue::Text(t) => text.push_str(t),
             NodeValue::Code(c) => text.push_str(&c.literal),
-            _ => text.push_str(&get_text_content(child)),
+            NodeValue::WikiLink(_) => {
+                let raw = heading_text(child).replace(PIPE_PLACEHOLDER, "|");
+                let display = raw.splitn(2, '|').nth(1).unwrap_or(&raw);
+                text.push_str(display);
+            }
+            _ => text.push_str(&heading_text(child)),
         }
     }
     text
@@ -90,7 +107,9 @@ pub fn render_toc_html(entries: &[TocEntry], page_title: Option<&str>) -> String
             let depth = entry.level.saturating_sub(body_min) as u32 + offset;
             html.push_str(&format!(
                 "<li data-depth=\"{}\"><a href=\"#{}\">{}</a></li>\n",
-                depth, entry.id, entry.text
+                depth,
+                entry.id,
+                html_escape(&entry.text)
             ));
         }
     }

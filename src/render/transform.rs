@@ -44,7 +44,8 @@ pub struct RenderResult {
 /// Uses U+FFFF as placeholder — comrak's wikilinks_title_after_pipe looks for `|`,
 /// so this preserves the separator for comrak while hiding it from the table parser.
 /// The placeholder is restored to `|` just before comrak processes wikilinks.
-const PIPE_PLACEHOLDER: char = '\u{FFFF}';
+/// Defined in `toc.rs` (the other reader of pre-transform heading text).
+use super::toc::PIPE_PLACEHOLDER;
 
 fn escape_pipes_in_wikilinks(markdown: &str) -> String {
     let mut result = String::with_capacity(markdown.len());
@@ -249,14 +250,19 @@ pub fn render_markdown_with_source(
     // Extract TOC from headings before transforming
     let toc_entries = toc::extract_toc(root);
 
+    // Add heading IDs for TOC anchors. Must run BEFORE transform_wikilinks and
+    // on the same heading-text derivation as extract_toc: a heading that is a
+    // wikilink (`### [[cybics/form|form]]`) becomes an HtmlInline node after
+    // the transform, whose text no AST walk can see — the heading would get no
+    // anchor while the TOC links to one computed from the raw pre-transform
+    // text (placeholder included). Same AST + same text ⇒ ids always match.
+    inject_heading_ids(root, &arena);
+
     // Transform wikilinks to proper HTML links
     transform_wikilinks(root, store, &arena, source_namespace, source_subgraph);
 
     // Transform external links to open in new tab
     transform_external_links(root, &arena);
-
-    // Add heading IDs for TOC anchors
-    inject_heading_ids(root, &arena);
 
     // Render svgbob fences to inline SVG before syntect sees them
     render_svgbob_blocks(root);
@@ -295,7 +301,9 @@ fn inject_heading_ids<'a>(root: &'a AstNode<'a>, arena: &'a Arena<AstNode<'a>>) 
     for node in root.descendants() {
         let data = node.data.borrow();
         if let NodeValue::Heading(_) = data.value {
-            let text = get_node_text_content(node);
+            // Same derivation as toc::extract_toc — see the call-site comment
+            // in render_markdown_with_source for why these must agree.
+            let text = toc::heading_text(node);
             if !text.is_empty() {
                 let id = slug::slugify(&text);
                 headings.push((node, id));
@@ -963,5 +971,48 @@ mod tests {
         assert_eq!(result.toc[0].level, 1);
         assert_eq!(result.toc[1].text, "Second");
         assert_eq!(result.toc[1].level, 2);
+    }
+
+    #[test]
+    fn test_toc_aliased_wikilink_heading() {
+        // the soft3 README shape: `### [[cybics/form|form]]`. the TOC must show
+        // the alias only — never the target path or the U+FFFF pipe placeholder
+        // (`cybics/form\u{FFFF}form`) — and its href must match an anchor that
+        // actually exists in the rendered heading.
+        let store = store_with_page("cybics/form");
+        let result = render_markdown("### [[cybics/form|form]]\n\ncontent", &store, TEST_THEME);
+        assert_eq!(result.toc.len(), 1);
+        assert_eq!(result.toc[0].text, "form");
+        assert_eq!(result.toc[0].id, "form");
+        assert!(!result.toc[0].text.contains('\u{FFFF}'));
+        assert!(
+            result.html.contains(r##"id="form""##),
+            "heading anchor must exist for the TOC link: {}",
+            result.html
+        );
+    }
+
+    #[test]
+    fn test_toc_plain_wikilink_heading() {
+        // `## [[focus]]` — no alias: display is the target itself, and the
+        // anchor id matches the TOC id.
+        let store = store_with_page("focus");
+        let result = render_markdown("## [[focus]]\n\ncontent", &store, TEST_THEME);
+        assert_eq!(result.toc.len(), 1);
+        assert_eq!(result.toc[0].text, "focus");
+        assert_eq!(result.toc[0].id, "focus");
+        assert!(result.html.contains(r##"id="focus""##));
+    }
+
+    #[test]
+    fn test_toc_mixed_text_and_wikilink_heading() {
+        // wikilink embedded in surrounding heading text keeps its alias inline.
+        let store = store_with_page("cybics/mass");
+        let result =
+            render_markdown("## the [[cybics/mass|mass]] layer\n\ncontent", &store, TEST_THEME);
+        assert_eq!(result.toc.len(), 1);
+        assert_eq!(result.toc[0].text, "the mass layer");
+        assert_eq!(result.toc[0].id, "the-mass-layer");
+        assert!(result.html.contains(r##"id="the-mass-layer""##));
     }
 }
