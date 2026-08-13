@@ -147,6 +147,11 @@ pub fn ingest_subgraph(
         .cloned();
 
     let decl_slug = crate::parser::slugify_page_name(&decl.declaring_page_id);
+    // The README takes over the declaring page's slot only when the subgraph
+    // mounts at that slug (top-level mount) or at the root. A parent-mounted
+    // subgraph (mount "soft3/tru") renders elsewhere — the root page keeps
+    // its slug and its own content (e.g. a concept atom named like the repo).
+    let readme_takes_over = decl.mount == decl_slug || decl.mount.is_empty();
 
     let mut pages = Vec::with_capacity(page_count + file_count);
 
@@ -156,7 +161,7 @@ pub fn ingest_subgraph(
             continue;
         }
         let mut page = crate::parser::parse_file(file)?;
-        if page.id == decl.declaring_page_id || page.id == decl_slug {
+        if readme_takes_over && (page.id == decl.declaring_page_id || page.id == decl_slug) {
             if let Some(ref dp) = declaring_page {
                 page.meta.tags = dp.meta.tags.clone();
                 page.meta.aliases = dp.meta.aliases.clone();
@@ -191,7 +196,7 @@ pub fn ingest_subgraph(
     }
 
     // Step 2: evict the declaring page from root — the subgraph README owns it now
-    if declaring_page.is_some() {
+    if readme_takes_over && declaring_page.is_some() {
         root_pages.retain(|p| !(p.id == decl.declaring_page_id && p.subgraph.is_none()));
     }
 
@@ -241,6 +246,9 @@ pub fn ingest_subgraph_cached(
         .find(|p| p.id == decl.declaring_page_id)
         .cloned();
     let decl_slug = crate::parser::slugify_page_name(&decl.declaring_page_id);
+    // See ingest_subgraph: parent-mounted subgraphs never take over the
+    // declaring page's slug — the root page keeps living there.
+    let readme_takes_over = decl.mount == decl_slug || decl.mount.is_empty();
 
     let mut pages = Vec::with_capacity(page_count + file_count);
 
@@ -267,7 +275,7 @@ pub fn ingest_subgraph_cached(
             p
         };
 
-        if page.id == decl.declaring_page_id || page.id == decl_slug {
+        if readme_takes_over && (page.id == decl.declaring_page_id || page.id == decl_slug) {
             if let Some(ref dp) = declaring_page {
                 page.meta.tags = dp.meta.tags.clone();
                 page.meta.aliases = dp.meta.aliases.clone();
@@ -301,7 +309,7 @@ pub fn ingest_subgraph_cached(
         pages.push(page);
     }
 
-    if declaring_page.is_some() {
+    if readme_takes_over && declaring_page.is_some() {
         root_pages.retain(|p| !(p.id == decl.declaring_page_id && p.subgraph.is_none()));
     }
 
