@@ -124,13 +124,21 @@ pub fn resolve_link(
 
     // Score-by-shared-prefix lambda: candidates from any source (basename
     // matches OR alias targets) compete on how close they sit to the source.
+    // A page with a source file always outranks a stub — stubs only win when
+    // nothing real answers to the name. (During index building stub_pages is
+    // still empty, so this only affects render-time resolution.)
     let score_for = |id: &str| -> usize {
+        let real = if store.stub_pages.contains(id) {
+            0
+        } else {
+            1_000_000
+        };
         let shared = id
             .split('/')
             .zip(source_prefix.split('/'))
             .take_while(|(a, b)| a == b)
             .count();
-        shared * 10_000 + (10_000usize.saturating_sub(id.len()))
+        real + shared * 10_000 + (10_000usize.saturating_sub(id.len()))
     };
 
     let mut best: Option<(usize, String)> = None;

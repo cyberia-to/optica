@@ -167,14 +167,23 @@ pub fn build_graph(pages: Vec<ParsedPage>) -> Result<PageStore> {
         gravity: HashMap::new(),
     };
 
-    // First pass: insert all pages, build alias map, and populate subgraph index
+    // First pass: insert all pages, build alias map, and populate subgraph index.
+    // Root-graph pages own their aliases: a subgraph page never displaces a
+    // root page's claim on an alias slug (e.g. crystal specs alias "neurons"
+    // must not shadow the root neuron atom).
+    let mut root_aliases: std::collections::HashSet<String> = std::collections::HashSet::new();
     for page in pages {
         let id = page.id.clone();
 
         // Register aliases
         for alias in &page.meta.aliases {
             let alias_slug = slugify_page_name(alias);
-            store.alias_map.insert(alias_slug, id.clone());
+            if page.subgraph.is_none() {
+                root_aliases.insert(alias_slug.clone());
+                store.alias_map.insert(alias_slug, id.clone());
+            } else if !root_aliases.contains(&alias_slug) {
+                store.alias_map.insert(alias_slug, id.clone());
+            }
         }
 
         // Track subgraph membership
@@ -238,11 +247,18 @@ pub fn build_graph_fast(
         gravity: old_gravity,
     };
 
+    // Root-graph pages own their aliases — same precedence as the full build.
+    let mut root_aliases: std::collections::HashSet<String> = std::collections::HashSet::new();
     for page in pages {
         let id = page.id.clone();
         for alias in &page.meta.aliases {
             let alias_slug = slugify_page_name(alias);
-            store.alias_map.insert(alias_slug, id.clone());
+            if page.subgraph.is_none() {
+                root_aliases.insert(alias_slug.clone());
+                store.alias_map.insert(alias_slug, id.clone());
+            } else if !root_aliases.contains(&alias_slug) {
+                store.alias_map.insert(alias_slug, id.clone());
+            }
         }
         if let Some(ref sg) = page.subgraph {
             store.subgraph_pages.entry(sg.clone()).or_default().insert(id.clone());
