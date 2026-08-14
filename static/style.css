@@ -2268,3 +2268,46 @@ body:has(.fullscreen-viz) .main-content {
     opacity: 0.4;
 }
 
+
+/* ── sidebar contents ─────────────────────────────────────────────
+   The page's TOC renders in the sidebar under the site menu (see
+   partials/nav.html). Same .toc markup as before, scaled to menu
+   size: smaller type, tighter indent, muted links that light up on
+   hover like sidebar items. */
+.sidebar-toc {
+    margin-top: 0.4rem;
+    padding: 0.5rem 1rem 0.6rem;
+    border-top: 1px solid var(--color-border, #222);
+}
+.sidebar-toc .toc {
+    margin: 0;
+}
+.sidebar-toc .toc h2 {
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text);
+    opacity: 0.45;
+    margin: 0 0 0.4rem;
+}
+.sidebar-toc .toc ul {
+    padding-left: 0.55rem;
+}
+.sidebar-toc .toc li {
+    margin: 0.12rem 0;
+    padding-left: calc((var(--toc-d, 1) - 1) * 0.7rem);
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+.sidebar-toc .toc li::before {
+    left: calc((var(--toc-d, 1) - 1) * 0.7rem - 0.55rem);
+}
+.sidebar-toc .toc a {
+    color: var(--color-text);
+    opacity: 0.7;
+}
+.sidebar-toc .toc a:hover {
+    opacity: 1;
+    color: var(--color-primary);
+}

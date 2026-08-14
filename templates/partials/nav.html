@@ -104,6 +104,14 @@
 
     </nav>
 
+    {% if page is defined and page.toc %}
+    <!-- The current page's contents render as a second menu section,
+         right under the site nav — the article body stays clean. -->
+    <nav class="sidebar-toc" aria-label="Contents">
+        {{ page.toc | safe }}
+    </nav>
+    {% endif %}
+
     <!-- Primary functions live INSIDE the sidebar's flex column so
          their geometry is inherited verbatim — same width, same
          left edge, same row format. .sidebar-nav has flex: 1 so
