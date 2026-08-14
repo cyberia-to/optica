@@ -89,9 +89,7 @@ pub fn render_toc_html(entries: &[TocEntry], page_title: Option<&str>) -> String
         return String::new();
     }
 
-    let mut html = String::from(
-        "<nav class=\"toc\" aria-label=\"Table of Contents\">\n<h2>Contents</h2>\n<ul>\n",
-    );
+    let mut html = String::from("<nav class=\"toc\" aria-label=\"Table of Contents\">\n<ul>\n");
 
     if let Some(title) = page_title {
         html.push_str(&format!(

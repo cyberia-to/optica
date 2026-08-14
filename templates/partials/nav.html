@@ -58,6 +58,13 @@
     <nav class="sidebar-nav" aria-label="Main navigation">
         {% if nav_menu is defined and nav_menu %}
         <ul class="sidebar-menu">
+            {# Root pages nest their contents under the site header,
+               above the first menu item. #}
+            {% if page is defined and page.toc and toc_parent_url is defined and toc_parent_url == "" %}
+            <li class="sidebar-item sidebar-contents">
+                {{ page.toc | safe }}
+            </li>
+            {% endif %}
             {% for item in nav_menu %}
             {# Skip whichever item duplicates the site title — the
                title row above already shows it (with the matching
@@ -96,6 +103,13 @@
                         >&nearr;</span
                     >{% endif %}
                 </a>
+                {# The current page's contents nest here, as a submenu
+                   of the item that holds the page. #}
+                {% if page is defined and page.toc and toc_parent_url is defined and toc_parent_url == item.url %}
+                <div class="sidebar-contents">
+                    {{ page.toc | safe }}
+                </div>
+                {% endif %}
             </li>
             {% endif %}
             {% endfor %}
@@ -103,14 +117,6 @@
         {% endif %}
 
     </nav>
-
-    {% if page is defined and page.toc %}
-    <!-- The current page's contents render as a second menu section,
-         right under the site nav — the article body stays clean. -->
-    <nav class="sidebar-toc" aria-label="Contents">
-        {{ page.toc | safe }}
-    </nav>
-    {% endif %}
 
     <!-- Primary functions live INSIDE the sidebar's flex column so
          their geometry is inherited verbatim — same width, same

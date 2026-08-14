@@ -376,6 +376,37 @@ pub fn build_page_context(
 
     let nav_menu = resolve_nav_menu(config, store);
 
+    // Where this page's contents nest in the sidebar: under the menu item
+    // whose url is the longest prefix of the page's url. Empty means the
+    // page lives at the root — the contents then nest under the site
+    // header, above the first menu item.
+    let toc_parent_url = {
+        let page_url = format!("/{}", page.id);
+        let mut best = String::new();
+        for item in &nav_menu {
+            let url: String = item
+                .get_attr("url")
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_default();
+            let label: String = item
+                .get_attr("label")
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_default();
+            // the site-title item renders as the header, not a menu row
+            if label == config.site.title {
+                continue;
+            }
+            if (page_url == url || page_url.starts_with(&format!("{}/", url)))
+                && url.len() > best.len()
+            {
+                best = url;
+            }
+        }
+        best
+    };
+
     // Generate TOC HTML if page has headings.
     let toc_html = if toc_entries.len() >= 2 {
         toc::render_toc_html(toc_entries, None)
@@ -490,6 +521,7 @@ pub fn build_page_context(
         site => config.site,
         style => config.style,
         nav_menu => nav_menu,
+        toc_parent_url => toc_parent_url,
         graph => config.graph,
         analytics => config.analytics,
         search => config.search,

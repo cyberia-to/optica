@@ -2270,44 +2270,44 @@ body:has(.fullscreen-viz) .main-content {
 
 
 /* ── sidebar contents ─────────────────────────────────────────────
-   The page's TOC renders in the sidebar under the site menu (see
-   partials/nav.html). Same .toc markup as before, scaled to menu
-   size: smaller type, tighter indent, muted links that light up on
-   hover like sidebar items. */
-.sidebar-toc {
-    margin-top: 0.4rem;
-    padding: 0.5rem 1rem 0.6rem;
-    border-top: 1px solid var(--color-border, #222);
+   The current page's table of contents nests inside the sidebar
+   menu as a submenu of the item that holds the page (see partials/
+   nav.html); root pages nest under the site header, above the first
+   item. Menu-scale hierarchy: no label, no markers — indent alone
+   carries depth. The block exists only on its own page, so moving
+   to another page dissolves it. */
+.sidebar-contents .toc {
+    margin: 0.1rem 0 0.4rem;
 }
-.sidebar-toc .toc {
+.sidebar-contents .toc ul {
     margin: 0;
+    padding: 0;
+    list-style: none;
 }
-.sidebar-toc .toc h2 {
-    font-size: 0.68rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+.sidebar-contents .toc li {
+    margin: 0;
+    padding-left: calc(2.4rem + (var(--toc-d, 1) - 1) * 0.8rem);
+    position: relative;
+}
+.sidebar-contents .toc li::before {
+    content: none;
+}
+.sidebar-contents .toc a {
+    display: block;
+    padding: 0.22rem 1rem 0.22rem 0;
+    font-size: 0.85rem;
+    line-height: 1.35;
     color: var(--color-text);
-    opacity: 0.45;
-    margin: 0 0 0.4rem;
+    opacity: 0.65;
+    text-decoration: none;
 }
-.sidebar-toc .toc ul {
-    padding-left: 0.55rem;
-}
-.sidebar-toc .toc li {
-    margin: 0.12rem 0;
-    padding-left: calc((var(--toc-d, 1) - 1) * 0.7rem);
-    font-size: 0.82rem;
-    line-height: 1.4;
-}
-.sidebar-toc .toc li::before {
-    left: calc((var(--toc-d, 1) - 1) * 0.7rem - 0.55rem);
-}
-.sidebar-toc .toc a {
-    color: var(--color-text);
-    opacity: 0.7;
-}
-.sidebar-toc .toc a:hover {
+.sidebar-contents .toc a:hover {
     opacity: 1;
     color: var(--color-primary);
+    background: none;
+}
+/* Root-nested contents (the homepage and other root pages) — the
+   list itself is the menu row, so the row chrome goes away. */
+li.sidebar-contents {
+    padding: 0;
 }
