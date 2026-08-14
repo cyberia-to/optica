@@ -439,6 +439,37 @@ pub fn scan_subgraph(decl: &SubgraphDecl) -> Result<Vec<DiscoveredFile>> {
         }
     }
 
+    // Deterministic collision resolution. Two markdown files can map to the
+    // same page name — e.g. README.md and root/README.md both claim the
+    // mount (page names inside the graph dir are relative to it). The
+    // shallowest path wins, so the repo's own README owns its mount page;
+    // ties break lexicographically. Without this the winner followed
+    // filesystem walk order and flipped between machines.
+    let rank = |p: &Path| (p.components().count(), p.to_string_lossy().into_owned());
+    let mut winners: std::collections::HashMap<String, PathBuf> = std::collections::HashMap::new();
+    for f in files.iter().filter(|f| f.kind == FileKind::Page) {
+        winners
+            .entry(f.name.clone())
+            .and_modify(|best| {
+                if rank(&f.path) < rank(best) {
+                    *best = f.path.clone();
+                }
+            })
+            .or_insert_with(|| f.path.clone());
+    }
+    for f in &files {
+        if f.kind == FileKind::Page && winners.get(&f.name).is_some_and(|p| p != &f.path) {
+            eprintln!(
+                "Warning: subgraph '{}': page '{}' — {} shadowed by {}",
+                decl.name,
+                f.name,
+                f.path.display(),
+                winners[&f.name].display()
+            );
+        }
+    }
+    files.retain(|f| f.kind != FileKind::Page || winners.get(&f.name).map(|p| p == &f.path).unwrap_or(true));
+
     Ok(files)
 }
 
