@@ -2311,3 +2311,20 @@ body:has(.fullscreen-viz) .main-content {
 li.sidebar-contents {
     padding: 0;
 }
+
+/* ── table section rows ───────────────────────────────────────────
+   A body row whose cells beyond the first are all empty reads as a
+   small heading inside the table (the stack registry pattern):
+   bigger lead, accent color, extra air above. */
+tbody tr:has(td:nth-child(2):empty):has(td:last-child:empty) td:first-child {
+    padding-top: 1.6rem;
+    padding-bottom: 0.3rem;
+    font-size: 1.05rem;
+    font-weight: 700;
+}
+tbody tr:has(td:nth-child(2):empty):has(td:last-child:empty) td:first-child a {
+    color: var(--color-primary);
+}
+tbody tr:has(td:nth-child(2):empty):has(td:last-child:empty) {
+    border-bottom: none;
+}
