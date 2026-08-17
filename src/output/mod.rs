@@ -76,16 +76,30 @@ pub fn write_output(
     }
     fs::create_dir_all(output_dir)?;
 
-    // Write rendered HTML pages
+    // Write rendered HTML pages. Skip media-asset page ids so we never create
+    // `media/foo.svg/index.html` directories that block raw media serving.
     for page in rendered {
+        if media::is_media_asset_page_id(&page.page_id) {
+            continue;
+        }
         let file_path = output_dir.join(page.url_path.trim_start_matches('/'));
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
-                anyhow::anyhow!("create_dir_all({}) for page '{}': {}", parent.display(), page.page_id, e)
+                anyhow::anyhow!(
+                    "create_dir_all({}) for page '{}': {}",
+                    parent.display(),
+                    page.page_id,
+                    e
+                )
             })?;
         }
         fs::write(&file_path, &page.html).map_err(|e| {
-            anyhow::anyhow!("write({}) for page '{}': {}", file_path.display(), page.page_id, e)
+            anyhow::anyhow!(
+                "write({}) for page '{}': {}",
+                file_path.display(),
+                page.page_id,
+                e
+            )
         })?;
     }
 
@@ -100,7 +114,7 @@ pub fn write_output(
         }
     }
 
-    // Copy media from graph
+    // Copy media from graph (raw files — must win over any HTML leftovers)
     media::copy_media(discovered, output_dir)?;
 
     // Generate RSS feed
@@ -141,13 +155,18 @@ pub fn write_dirty_pages(
 ) -> Result<()> {
     let output_dir = &config.build.output_dir;
     for page in rendered {
-        if dirty_ids.contains(&page.page_id) {
-            let file_path = output_dir.join(page.url_path.trim_start_matches('/'));
-            if let Some(parent) = file_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&file_path, &page.html)?;
+        if !dirty_ids.contains(&page.page_id) {
+            continue;
         }
+        // Never materialize media assets as HTML directories.
+        if media::is_media_asset_page_id(&page.page_id) {
+            continue;
+        }
+        let file_path = output_dir.join(page.url_path.trim_start_matches('/'));
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&file_path, &page.html)?;
     }
     Ok(())
 }
@@ -170,6 +189,9 @@ pub fn write_incremental(
         .collect();
 
     for page in rendered {
+        if media::is_media_asset_page_id(&page.page_id) {
+            continue;
+        }
         let file_path = output_dir.join(page.url_path.trim_start_matches('/'));
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)?;
@@ -179,6 +201,7 @@ pub fn write_incremental(
 
     // Remove stale page output directories (pages that were moved or deleted).
     // Recursive walk to catch nested namespace pages (e.g. /ns/child/index.html).
+    // Do not walk into media/ — raw assets live there (files, not index.html).
     {
         let skip_dirs: std::collections::HashSet<&str> =
             ["static", "media", "api"].into_iter().collect();
