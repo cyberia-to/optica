@@ -53,6 +53,47 @@ pub struct ParsedPage {
     pub outgoing_links: Vec<String>,
 }
 
+/// Windows NTFS / Win32 reserved device basenames (case-insensitive).
+const WINDOWS_RESERVED: &[&str] = &[
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// Sanitize one path component for cross-platform paths (esp. Windows NTFS).
+/// NTFS forbids trailing `.` / space and reserved device basenames; leading `.` is kept.
+fn sanitize_slug_component(comp: &str) -> String {
+    let mut s = comp.trim().to_string();
+    // collapse runs of dots (punctuation-only titles → "...")
+    while s.contains("..") {
+        s = s.replace("..", ".");
+    }
+    // strip trailing dots/spaces/hyphens (NTFS rejects trailing `.` and ` `)
+    while s.ends_with('.') || s.ends_with(' ') || s.ends_with('-') {
+        s.pop();
+    }
+    // strip leading hyphens/spaces only (keep a leading `.` for hidden-style names)
+    while s.starts_with('-') || s.starts_with(' ') {
+        s.remove(0);
+    }
+    if s.is_empty() || s.chars().all(|c| c == '.') {
+        return "_".to_string();
+    }
+    // Windows: CON, PRN, AUX, NUL, COM1–9, LPT1–9 are reserved device names
+    let stem = s.trim_start_matches('.').split('.').next().unwrap_or(&s);
+    let stem_l = stem.to_ascii_lowercase();
+    if WINDOWS_RESERVED.iter().any(|r| *r == stem_l) {
+        s.push('_');
+    }
+    while s.ends_with('.') || s.ends_with(' ') || s.ends_with('-') {
+        s.pop();
+    }
+    if s.is_empty() {
+        "_".to_string()
+    } else {
+        s
+    }
+}
+
 pub fn slugify_page_name(name: &str) -> PageId {
     use unicode_normalization::UnicodeNormalization;
     let lower = name.nfc().collect::<String>().to_lowercase();
@@ -60,6 +101,8 @@ pub fn slugify_page_name(name: &str) -> PageId {
     let mut prev_hyphen = true; // prevents leading hyphen
 
     for ch in lower.chars() {
+        // Keep alnum, $, and internal dots (dates / abbreviations).
+        // NTFS forbids: < > : " / \ | ? * and trailing . / space — handled below.
         if ch.is_alphanumeric() || ch == '$' || ch == '.' {
             result.push(ch);
             prev_hyphen = false;
@@ -72,17 +115,28 @@ pub fn slugify_page_name(name: &str) -> PageId {
             result.push('/');
             prev_hyphen = true; // prevents hyphen after slash
         } else if !prev_hyphen {
+            // spaces and punctuation (including : " | ? * \ < >) → hyphen
             result.push('-');
             prev_hyphen = true;
         }
     }
 
-    let mut slug = result.trim_end_matches('-').to_string();
+    // Sanitize each namespace component for Windows NTFS + POSIX portability
+    let mut slug = result
+        .split('/')
+        .map(sanitize_slug_component)
+        .collect::<Vec<_>>()
+        .join("/");
+
     // macOS HFS+/APFS limit: 255 bytes per path component;
     // leave room for /index.html in pretty URL mode
     if slug.len() > 200 {
         slug.truncate(200);
-        slug = slug.trim_end_matches('-').to_string();
+        slug = slug
+            .split('/')
+            .map(sanitize_slug_component)
+            .collect::<Vec<_>>()
+            .join("/");
     }
     slug
 }
@@ -257,7 +311,9 @@ pub fn parse_file(file: &DiscoveredFile) -> Result<ParsedPage> {
 
     // Rewrite relative markdown links for subgraph pages so they resolve
     // to the correct slugified URLs within the subgraph namespace.
-    let is_readme = file.path.file_stem()
+    let is_readme = file
+        .path
+        .file_stem()
         .map(|s| s.to_string_lossy().eq_ignore_ascii_case("readme"))
         .unwrap_or(false);
     let normalized = if file.subgraph.is_some() {
@@ -329,11 +385,7 @@ fn parse_non_md_file(file: &DiscoveredFile) -> Result<ParsedPage> {
                 "Binary file: `{}`\n\nSize: {}\nType: {}",
                 file.name,
                 size,
-                if ext.is_empty() {
-                    "unknown"
-                } else {
-                    &ext
-                }
+                if ext.is_empty() { "unknown" } else { &ext }
             );
             (content_md, Vec::new())
         }
@@ -487,9 +539,29 @@ fn is_media_extension(path: &str) -> bool {
     let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
     matches!(
         ext.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "ico" | "bmp" | "avif"
-            | "mp4" | "webm" | "ogg" | "mp3" | "wav" | "flac"
-            | "pdf" | "zip" | "tar" | "gz" | "woff" | "woff2" | "ttf" | "eot"
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "svg"
+            | "webp"
+            | "ico"
+            | "bmp"
+            | "avif"
+            | "mp4"
+            | "webm"
+            | "ogg"
+            | "mp3"
+            | "wav"
+            | "flac"
+            | "pdf"
+            | "zip"
+            | "tar"
+            | "gz"
+            | "woff"
+            | "woff2"
+            | "ttf"
+            | "eot"
     )
 }
 
@@ -615,7 +687,10 @@ fn rewrite_relative_links(content: &str, page_name: &str, is_readme: bool) -> St
             let repo_relative = resolved
                 .strip_prefix(&format!("{}/", subgraph_name))
                 .unwrap_or(&resolved);
-            return format!("{}[{}](/media/{}/{}{})", prefix, text, subgraph_name, repo_relative, fragment);
+            return format!(
+                "{}[{}](/media/{}/{}{})",
+                prefix, text, subgraph_name, repo_relative, fragment
+            );
         }
 
         // Page links: strip the transparent root/graph/pages prefix the scanner
@@ -660,7 +735,10 @@ fn rewrite_relative_links(content: &str, page_name: &str, is_readme: bool) -> St
             .unwrap_or(&resolved);
 
         if is_media_extension(url) {
-            format!("{}/media/{}/{}{}{}", attr_prefix, subgraph_name, repo_relative, fragment, quote_end)
+            format!(
+                "{}/media/{}/{}{}{}",
+                attr_prefix, subgraph_name, repo_relative, fragment, quote_end
+            )
         } else {
             let resolved = strip_graph_dir(&resolved);
             let resolved = resolved
@@ -751,7 +829,18 @@ mod tests {
         assert_eq!(slugify_page_name("2025-02-08"), "2025-02-08");
         assert_eq!(slugify_page_name("$BOOT"), "$boot");
         assert_eq!(slugify_page_name("$PUSSY on $SOL"), "$pussy-on-$sol");
+        // leading-dot titles kept (Windows allows leading `.`; trailing is the problem)
         assert_eq!(slugify_page_name(".moon names"), ".moon-names");
+        // trailing period (species abbrev.) must not leave trailing dot on disk
+        assert_eq!(slugify_page_name("Salmonella spp."), "salmonella-spp");
+        // Windows-forbidden punctuation in titles
+        assert_eq!(slugify_page_name("foo: bar"), "foo-bar");
+        assert_eq!(slugify_page_name("a|b?c*"), "a-b-c");
+        // punctuation-only → placeholder (not "..." directory)
+        assert_eq!(slugify_page_name("..."), "_");
+        // reserved Win32 device names
+        assert_eq!(slugify_page_name("CON"), "con_");
+        assert_eq!(slugify_page_name("aux/notes"), "aux_/notes");
 
         // NFC and NFD forms of ö must produce the same slug
         let nfc = "G\u{00F6}del prison"; // ö as single codepoint
@@ -787,10 +876,7 @@ mod tests {
     #[test]
     fn test_extract_namespace_deep() {
         // "a/b/c/page" → Some("a/b/c")
-        assert_eq!(
-            extract_namespace("a/b/c/page"),
-            Some("a/b/c".to_string())
-        );
+        assert_eq!(extract_namespace("a/b/c/page"), Some("a/b/c".to_string()));
     }
 
     #[test]
