@@ -48,7 +48,14 @@ pub fn render_single_page(
         page.namespace.as_deref(),
         page.subgraph.as_deref(),
     );
-    let ctx = context::build_page_context(page, &render_result.html, &render_result.toc, store, config, &peer_index);
+    let ctx = context::build_page_context(
+        page,
+        &render_result.html,
+        &render_result.toc,
+        store,
+        config,
+        &peer_index,
+    );
     let template_name = match page.kind {
         crate::parser::PageKind::Journal => "journal.html",
         crate::parser::PageKind::Page | crate::parser::PageKind::File => "page.html",
@@ -60,7 +67,11 @@ pub fn render_single_page(
     } else {
         format!("/{}.html", page_id)
     };
-    Ok(RenderedPage { page_id: page_id.to_string(), html, url_path })
+    Ok(RenderedPage {
+        page_id: page_id.to_string(),
+        html,
+        url_path,
+    })
 }
 
 /// Render pages with optional caching. When `dirty_ids` is Some, only pages in
@@ -82,9 +93,7 @@ pub fn render_cached(
 
     // Reserved URL slugs — synthetic pages take priority over regular pages
     let reserved_slugs: std::collections::HashSet<&str> =
-        ["tags", "blog", "graph", "files"]
-            .into_iter()
-            .collect();
+        ["tags", "blog", "graph", "files"].into_iter().collect();
 
     for (page_id, page) in &store.pages {
         // Skip regular pages that conflict with synthetic page URLs
@@ -284,6 +293,11 @@ fn render_index(
     // If there's a root page configured, render it as index
     if let Some(ref root_page_name) = config.site.root_page {
         let root_id = crate::parser::slugify_page_name(root_page_name);
+        // `root_page = "blog"` is the journal timeline (same template as /blog),
+        // not the markdown page named blog.md.
+        if root_id == "blog" {
+            return render_blog(store, config, env);
+        }
         if let Some(page) = store.pages.get(&root_id) {
             if PageStore::is_page_public(page, &config.content) {
                 let peer_index = context::build_peer_index(store, config);
@@ -480,6 +494,17 @@ fn render_blog(
         .collect();
 
     let public_count = store.public_pages(&config.content).len();
+    let root_is_blog = config
+        .site
+        .root_page
+        .as_deref()
+        .map(crate::parser::slugify_page_name)
+        == Some("blog".into());
+    let canonical_url = if root_is_blog {
+        config.site.base_url.clone()
+    } else {
+        format!("{}/blog", config.site.base_url)
+    };
 
     let ctx = minijinja::context! {
         site => config.site,
@@ -490,7 +515,7 @@ fn render_blog(
         graph => config.graph,
         favicon => config.site.favicon,
         description => format!("Blog — {}", config.site.title),
-        canonical_url => format!("{}/blog", config.site.base_url),
+        canonical_url => canonical_url,
         posts => page_data,
         page_count => public_count,
     };
@@ -579,7 +604,12 @@ fn find_repo_root(dir: &Path) -> Option<PathBuf> {
 /// Returns a map: absolute_path -> (created_iso, modified_iso).
 fn git_dates_for_repo(repo_root: &Path) -> HashMap<String, (String, String)> {
     let output = std::process::Command::new("git")
-        .args(["log", "--format=format:%aI", "--name-only", "--diff-filter=ACMR"])
+        .args([
+            "log",
+            "--format=format:%aI",
+            "--name-only",
+            "--diff-filter=ACMR",
+        ])
         .current_dir(repo_root)
         .output();
     let output = match output {
@@ -686,10 +716,7 @@ fn render_files_page(
     // the cyber repo plus each subgraph repo. A single git log from
     // the root graph would miss everything outside it.
     let public = store.public_pages(&config.content);
-    let source_paths: Vec<PathBuf> = public
-        .iter()
-        .map(|p| p.source_path.clone())
-        .collect();
+    let source_paths: Vec<PathBuf> = public.iter().map(|p| p.source_path.clone()).collect();
     let dates = git_dates_for_paths(&source_paths);
 
     let mut pages: Vec<_> = public
@@ -737,63 +764,67 @@ fn render_files_page(
     let files_data: Vec<_> = pages
         .iter()
         .enumerate()
-        .map(|(i, (p, links_in, links_out, focus, size, density, gravity))| {
-            let focus_display = format!("{:.2}", focus * 100.0);
-            let size_display = format_size(*size);
-            let file_title = match p.kind {
-                crate::parser::PageKind::Page | crate::parser::PageKind::Journal => format!("{}.md", p.meta.title),
-                crate::parser::PageKind::File => p.meta.title.clone(),
-            };
+        .map(
+            |(i, (p, links_in, links_out, focus, size, density, gravity))| {
+                let focus_display = format!("{:.2}", focus * 100.0);
+                let size_display = format_size(*size);
+                let file_title = match p.kind {
+                    crate::parser::PageKind::Page | crate::parser::PageKind::Journal => {
+                        format!("{}.md", p.meta.title)
+                    }
+                    crate::parser::PageKind::File => p.meta.title.clone(),
+                };
 
-            // Look up git dates by absolute source path
-            let abs_key = p.source_path.to_string_lossy().to_string();
-            let (created_lmt, modified_lmt) = dates
-                .get(&abs_key)
-                .map(|(created, modified)| {
-                    let c = lunar::iso_to_lmt(created).unwrap_or_default();
-                    let m = lunar::iso_to_lmt(modified).unwrap_or_default();
-                    (c, m)
-                })
-                .unwrap_or_default();
+                // Look up git dates by absolute source path
+                let abs_key = p.source_path.to_string_lossy().to_string();
+                let (created_lmt, modified_lmt) = dates
+                    .get(&abs_key)
+                    .map(|(created, modified)| {
+                        let c = lunar::iso_to_lmt(created).unwrap_or_default();
+                        let m = lunar::iso_to_lmt(modified).unwrap_or_default();
+                        (c, m)
+                    })
+                    .unwrap_or_default();
 
-            // HSL lightness: 95% (low) → 35% (high) — maps percentile to green intensity
-            let size_light = 95.0 - size_pcts[i] * 60.0;
-            let focus_light = 95.0 - focus_pcts[i] * 60.0;
-            let in_light = 95.0 - in_pcts[i] * 60.0;
-            let out_light = 95.0 - out_pcts[i] * 60.0;
-            let den_light = 95.0 - den_pcts[i] * 60.0;
-            let grav_light = 95.0 - grav_pcts[i] * 60.0;
+                // HSL lightness: 95% (low) → 35% (high) — maps percentile to green intensity
+                let size_light = 95.0 - size_pcts[i] * 60.0;
+                let focus_light = 95.0 - focus_pcts[i] * 60.0;
+                let in_light = 95.0 - in_pcts[i] * 60.0;
+                let out_light = 95.0 - out_pcts[i] * 60.0;
+                let den_light = 95.0 - den_pcts[i] * 60.0;
+                let grav_light = 95.0 - grav_pcts[i] * 60.0;
 
-            minijinja::context! {
-                rank => i + 1,
-                title => file_title,
-                url => format!("/{}", p.id),
-                links_in => *links_in,
-                links_out => *links_out,
-                pagerank => focus_display,
-                size => size_display,
-                density => format_pct_of_sum(*density, sum_den),
-                gravity => format_pct_of_sum(*gravity, sum_grav),
-                tags => p.meta.tags.clone(),
-                icon => p.meta.icon.clone(),
-                created => created_lmt,
-                modified => modified_lmt,
-                size_sort => *size,
-                focus_sort => format!("{:.8}", focus),
-                in_sort => *links_in,
-                out_sort => *links_out,
-                density_sort => format!("{:.8}", density),
-                gravity_sort => format!("{:.10}", gravity),
-                created_sort => lmt_sort_key(&created_lmt),
-                modified_sort => lmt_sort_key(&modified_lmt),
-                size_light => format!("{:.0}", size_light),
-                focus_light => format!("{:.0}", focus_light),
-                in_light => format!("{:.0}", in_light),
-                out_light => format!("{:.0}", out_light),
-                den_light => format!("{:.0}", den_light),
-                grav_light => format!("{:.0}", grav_light),
-            }
-        })
+                minijinja::context! {
+                    rank => i + 1,
+                    title => file_title,
+                    url => format!("/{}", p.id),
+                    links_in => *links_in,
+                    links_out => *links_out,
+                    pagerank => focus_display,
+                    size => size_display,
+                    density => format_pct_of_sum(*density, sum_den),
+                    gravity => format_pct_of_sum(*gravity, sum_grav),
+                    tags => p.meta.tags.clone(),
+                    icon => p.meta.icon.clone(),
+                    created => created_lmt,
+                    modified => modified_lmt,
+                    size_sort => *size,
+                    focus_sort => format!("{:.8}", focus),
+                    in_sort => *links_in,
+                    out_sort => *links_out,
+                    density_sort => format!("{:.8}", density),
+                    gravity_sort => format!("{:.10}", gravity),
+                    created_sort => lmt_sort_key(&created_lmt),
+                    modified_sort => lmt_sort_key(&modified_lmt),
+                    size_light => format!("{:.0}", size_light),
+                    focus_light => format!("{:.0}", focus_light),
+                    in_light => format!("{:.0}", in_light),
+                    out_light => format!("{:.0}", out_light),
+                    den_light => format!("{:.0}", den_light),
+                    grav_light => format!("{:.0}", grav_light),
+                }
+            },
+        )
         .collect();
 
     let total = files_data.len();
