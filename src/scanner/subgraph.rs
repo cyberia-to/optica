@@ -167,7 +167,12 @@ pub fn ingest_subgraph(
                 page.meta.aliases = dp.meta.aliases.clone();
                 page.meta.properties = dp.meta.properties.clone();
                 page.meta.public = dp.meta.public;
-                page.meta.icon = dp.meta.icon.clone();
+                // Keep the subgraph README's icon when the declaring page
+                // has none — otherwise a topic hub without `icon:` blanks
+                // the menu picture.
+                if dp.meta.icon.is_some() {
+                    page.meta.icon = dp.meta.icon.clone();
+                }
                 page.meta.stake = dp.meta.stake;
                 if !dp.content_md.trim().is_empty() {
                     let readme_content = std::mem::take(&mut page.content_md);
@@ -281,7 +286,12 @@ pub fn ingest_subgraph_cached(
                 page.meta.aliases = dp.meta.aliases.clone();
                 page.meta.properties = dp.meta.properties.clone();
                 page.meta.public = dp.meta.public;
-                page.meta.icon = dp.meta.icon.clone();
+                // Keep the subgraph README's icon when the declaring page
+                // has none — otherwise a topic hub without `icon:` blanks
+                // the menu picture.
+                if dp.meta.icon.is_some() {
+                    page.meta.icon = dp.meta.icon.clone();
+                }
                 page.meta.stake = dp.meta.stake;
                 if !dp.content_md.trim().is_empty() {
                     let readme_content = std::mem::take(&mut page.content_md);
@@ -468,7 +478,9 @@ pub fn scan_subgraph(decl: &SubgraphDecl) -> Result<Vec<DiscoveredFile>> {
             );
         }
     }
-    files.retain(|f| f.kind != FileKind::Page || winners.get(&f.name).map(|p| p == &f.path).unwrap_or(true));
+    files.retain(|f| {
+        f.kind != FileKind::Page || winners.get(&f.name).map(|p| p == &f.path).unwrap_or(true)
+    });
 
     Ok(files)
 }
@@ -491,7 +503,10 @@ fn subgraph_page_name(path: &Path, repo_root: &Path, mount: &str) -> String {
     if name.eq_ignore_ascii_case("README") {
         return mount.to_string();
     }
-    if let Some(parent) = name.strip_suffix("/README").or_else(|| name.strip_suffix("/readme")) {
+    if let Some(parent) = name
+        .strip_suffix("/README")
+        .or_else(|| name.strip_suffix("/readme"))
+    {
         return join_mount(mount, parent);
     }
     // Case-insensitive check for README as last component
@@ -536,10 +551,7 @@ pub fn enforce_namespace_monopoly(
                 if ns == sg_ns || ns.starts_with(&format!("{}/", sg_ns)) {
                     evicted.push((
                         page.id.clone(),
-                        format!(
-                            "namespace '{}' claimed by subgraph '{}'",
-                            ns, sg_ns
-                        ),
+                        format!("namespace '{}' claimed by subgraph '{}'", ns, sg_ns),
                     ));
                     return false;
                 }
@@ -624,27 +636,34 @@ mod tests {
         fs::write(
             repo.join("README.md"),
             "---\ntags: doc\n---\n# mysub\n\nrepo readme",
-        ).unwrap();
+        )
+        .unwrap();
         fs::write(
             repo.join("root").join("inner.md"),
             "---\ntags: doc\n---\n\ninner page",
-        ).unwrap();
+        )
+        .unwrap();
         fs::write(repo.join("Cargo.toml"), "[package]\nname=\"x\"").unwrap();
 
         let config_path = workspace.path().join("subgraphs.toml");
         fs::write(
             &config_path,
-            format!(
-                "[[subgraphs]]\nname = \"mysub\"\npath = {:?}\n",
-                repo
-            ),
-        ).unwrap();
+            format!("[[subgraphs]]\nname = \"mysub\"\npath = {:?}\n", repo),
+        )
+        .unwrap();
 
         // load_subgraph_decls with TOML must produce a non-empty list.
         // Without it (None), it must produce an empty list — never crash.
         let decls = load_subgraph_decls(Some(&config_path)).unwrap();
-        assert_eq!(decls.len(), 1, "TOML config with one subgraph should load one decl");
-        assert!(load_subgraph_decls(None).unwrap().is_empty(), "no path → no decls");
+        assert_eq!(
+            decls.len(),
+            1,
+            "TOML config with one subgraph should load one decl"
+        );
+        assert!(
+            load_subgraph_decls(None).unwrap().is_empty(),
+            "no path → no decls"
+        );
 
         // ingest_subgraph must return non-empty pages (md + non-md), proving
         // the full pipeline runs. The historical bug bypassed this entirely.
@@ -667,7 +686,10 @@ mod tests {
         // Pages should carry the subgraph attribution so downstream filters
         // (private subgraph filtering, badge rendering) work.
         assert!(
-            ingestion.pages.iter().all(|p| p.subgraph.as_deref() == Some("mysub")),
+            ingestion
+                .pages
+                .iter()
+                .all(|p| p.subgraph.as_deref() == Some("mysub")),
             "every ingested page must be tagged with the subgraph name"
         );
     }

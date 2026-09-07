@@ -50,6 +50,10 @@
         <a href="/" class="site-title">
             {%- for item in nav_menu if item.label == site.title and item.icon -%}
             <span class="site-icon" aria-hidden="true">{{ item.icon }}</span>
+            {%- else -%}
+            {%- if favicon -%}
+            <span class="site-icon" aria-hidden="true">{{ favicon }}</span>
+            {%- endif -%}
             {%- endfor -%}
             <span class="site-name">{{ site.title }}</span>
         </a>
