@@ -256,7 +256,19 @@ fn main() -> Result<()> {
             config.media.ipfs_map = ipfs_map;
             config.media.ipfs_gateway = ipfs_gateway;
 
-            build_site(&config, cli.quiet, subgraphs.as_deref())?;
+            // Serve immediately: the port opens on the previous snapshot while
+            // the fresh build runs in the background. A restart therefore never
+            // takes the site down — stale-for-minutes beats dead-for-minutes.
+            {
+                let cfg = config.clone();
+                let quiet = cli.quiet;
+                let subs = subgraphs.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = build_site(&cfg, quiet, subs.as_deref()) {
+                        eprintln!("initial build failed: {e:#}");
+                    }
+                });
+            }
 
             optica::server::serve(&config, &bind, port, !no_reload, open, subgraphs.as_deref())?;
         }
