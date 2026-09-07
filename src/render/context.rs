@@ -3,12 +3,12 @@
 // crystal-type: source
 // crystal-domain: comp
 // ---
-use std::collections::HashMap;
 use crate::config::SiteConfig;
 use crate::graph::PageStore;
 use crate::parser::{PageId, ParsedPage};
 use crate::render::toc::{self, TocEntry};
 use minijinja::Value;
+use std::collections::HashMap;
 
 /// Pre-computed index: base_name → list of page IDs that share that base name.
 /// Built once, used O(1) per page instead of O(n) scan.
@@ -20,8 +20,13 @@ pub fn build_peer_index(store: &PageStore, config: &SiteConfig) -> PeerIndex {
         if !PageStore::is_page_public(page, &config.content) {
             continue;
         }
-        let base = page.meta.title.rsplit('/').next()
-            .unwrap_or(&page.meta.title).to_lowercase();
+        let base = page
+            .meta
+            .title
+            .rsplit('/')
+            .next()
+            .unwrap_or(&page.meta.title)
+            .to_lowercase();
         index.entry(base).or_default().push(page_id.clone());
     }
     index
@@ -292,7 +297,8 @@ pub fn build_page_context(
             if let Some(rest) = ns_key.strip_prefix(&prefix) {
                 let sub = rest.split('/').next().unwrap_or(rest);
                 if seen_subns.insert(sub.to_string()) {
-                    let sub_page_slug = crate::parser::slugify_page_name(&format!("{}/{}", page_name_lower, sub));
+                    let sub_page_slug =
+                        crate::parser::slugify_page_name(&format!("{}/{}", page_name_lower, sub));
                     folder_slugs.insert(sub_page_slug.clone());
                     let url = format!("/{}", sub_page_slug);
                     items.push(minijinja::context! {
@@ -305,8 +311,16 @@ pub fn build_page_context(
 
         // Remove direct children that have a matching folder entry (avoid duplicates)
         items.retain(|item| {
-            let url: String = item.get_attr("url").ok().and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
-            let title: String = item.get_attr("title").ok().and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
+            let url: String = item
+                .get_attr("url")
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_default();
+            let title: String = item
+                .get_attr("title")
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_default();
             if title.ends_with('/') {
                 return true; // Keep all folder entries
             }
@@ -317,8 +331,16 @@ pub fn build_page_context(
 
         // Sort: folders (ending with /) first, then files
         items.sort_by(|a, b| {
-            let a_title: String = a.get_attr("title").ok().and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
-            let b_title: String = b.get_attr("title").ok().and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
+            let a_title: String = a
+                .get_attr("title")
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_default();
+            let b_title: String = b
+                .get_attr("title")
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_default();
             let a_is_dir = a_title.ends_with('/');
             let b_is_dir = b_title.ends_with('/');
             match (a_is_dir, b_is_dir) {
@@ -338,7 +360,8 @@ pub fn build_page_context(
                 let existing_urls: std::collections::HashSet<String> = items
                     .iter()
                     .filter_map(|item| {
-                        item.get_attr("url").ok()
+                        item.get_attr("url")
+                            .ok()
                             .and_then(|v| v.as_str().map(|s| s.to_string()))
                     })
                     .collect();
@@ -452,8 +475,13 @@ pub fn build_page_context(
     // Dimensional peers: pages with the same base name in different namespaces.
     // e.g., "truth" (root) and "cyber/truth" are dimensional peers.
     // Uses pre-computed peer_index for O(1) lookup instead of O(n) scan.
-    let base_name = page.meta.title.rsplit('/').next()
-        .unwrap_or(&page.meta.title).to_lowercase();
+    let base_name = page
+        .meta
+        .title
+        .rsplit('/')
+        .next()
+        .unwrap_or(&page.meta.title)
+        .to_lowercase();
     let mut dimensional_peers: Vec<Value> = peer_index
         .get(&base_name)
         .map(|ids| {
@@ -481,15 +509,31 @@ pub fn build_page_context(
     if current_depth == 0 {
         // Root page: show most specific peers first
         dimensional_peers.sort_by(|a, b| {
-            let ad: i64 = a.get_attr("depth").ok().and_then(|v| i64::try_from(v).ok()).unwrap_or(0);
-            let bd: i64 = b.get_attr("depth").ok().and_then(|v| i64::try_from(v).ok()).unwrap_or(0);
+            let ad: i64 = a
+                .get_attr("depth")
+                .ok()
+                .and_then(|v| i64::try_from(v).ok())
+                .unwrap_or(0);
+            let bd: i64 = b
+                .get_attr("depth")
+                .ok()
+                .and_then(|v| i64::try_from(v).ok())
+                .unwrap_or(0);
             bd.cmp(&ad)
         });
     } else {
         // Namespaced page: show root (depth 0) first
         dimensional_peers.sort_by(|a, b| {
-            let ad: i64 = a.get_attr("depth").ok().and_then(|v| i64::try_from(v).ok()).unwrap_or(0);
-            let bd: i64 = b.get_attr("depth").ok().and_then(|v| i64::try_from(v).ok()).unwrap_or(0);
+            let ad: i64 = a
+                .get_attr("depth")
+                .ok()
+                .and_then(|v| i64::try_from(v).ok())
+                .unwrap_or(0);
+            let bd: i64 = b
+                .get_attr("depth")
+                .ok()
+                .and_then(|v| i64::try_from(v).ok())
+                .unwrap_or(0);
             ad.cmp(&bd)
         });
     }
@@ -521,6 +565,7 @@ pub fn build_page_context(
         site => config.site,
         style => config.style,
         nav_menu => nav_menu,
+        show_blog => config.nav.show_blog,
         toc_parent_url => toc_parent_url,
         graph => config.graph,
         analytics => config.analytics,

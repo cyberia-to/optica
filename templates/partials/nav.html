@@ -141,6 +141,7 @@
                 <span class="sidebar-label">Files</span>
             </a>
         </li>
+        {% if show_blog %}
         <li class="sidebar-item">
             <a href="/blog">
                 <span class="sidebar-icon" aria-hidden="true">
@@ -156,6 +157,7 @@
                 <span class="sidebar-label">Blog</span>
             </a>
         </li>
+        {% endif %}
     </ul>
     {% if graph is defined and graph.enabled %}
     <a href="/graph" class="app-orb app-orb--main app-orb--graph" aria-label="Graph">

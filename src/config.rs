@@ -65,15 +65,33 @@ impl Default for SiteSection {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-#[derive(Default)]
 pub struct NavSection {
     pub menu: Vec<MenuItem>,
     /// When set, auto-generate menu from pages that have this tag (e.g. "menu").
     /// Overrides the static `menu` list above.
     pub menu_tag: Option<String>,
     pub sidebar: SidebarSection,
+    /// Sidebar launcher Blog row. cyber.page turns this off — the chronicle
+    /// lives at cyberia.blog.
+    #[serde(default = "default_true")]
+    pub show_blog: bool,
+}
+
+impl Default for NavSection {
+    fn default() -> Self {
+        Self {
+            menu: vec![],
+            menu_tag: None,
+            sidebar: SidebarSection::default(),
+            show_blog: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
