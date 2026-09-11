@@ -212,7 +212,39 @@ fn restore_math_blocks(html: &str, math_blocks: &[String]) -> String {
 
 /// Render markdown to HTML with wikilink resolution, embed expansion, block refs, and queries.
 pub fn render_markdown(markdown: &str, store: &PageStore, _code_theme: &str) -> RenderResult {
-    render_markdown_with_source(markdown, store, _code_theme, None, None)
+    render_markdown_with_source(markdown, store, _code_theme, None, None, "")
+}
+
+/// Drop a leading `# Title` heading whose text is the page's own title — the
+/// page template already renders that title in its own header bar (icon +
+/// filename), so a body that opens by restating it produces two identical
+/// headings stacked on the page. Only an exact match (case-insensitive,
+/// trimmed) is stripped, and only when it is the very first line of content:
+/// a heading that says something the title bar doesn't is real content, not
+/// duplication, and is left alone.
+fn strip_redundant_title_heading<'a>(markdown: &'a str, title: &str) -> std::borrow::Cow<'a, str> {
+    let title_norm = title.trim().to_lowercase();
+    if title_norm.is_empty() {
+        return std::borrow::Cow::Borrowed(markdown);
+    }
+    let mut offset = 0;
+    for line in markdown.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            offset += line.len();
+            continue;
+        }
+        if let Some(heading_text) = trimmed.strip_prefix('#') {
+            let heading_text = heading_text.trim_start_matches('#').trim();
+            if heading_text.to_lowercase() == title_norm {
+                let mut rest = &markdown[offset + line.len()..];
+                rest = rest.trim_start_matches('\n');
+                return std::borrow::Cow::Owned(rest.to_string());
+            }
+        }
+        break;
+    }
+    std::borrow::Cow::Borrowed(markdown)
 }
 
 /// Render markdown with explicit source-page context — required for the
@@ -224,9 +256,14 @@ pub fn render_markdown_with_source(
     _code_theme: &str,
     source_namespace: Option<&str>,
     source_subgraph: Option<&str>,
+    title: &str,
 ) -> RenderResult {
+    // Pre-process: drop a leading heading that only restates the page title —
+    // the title bar above the body already shows it.
+    let markdown = strip_redundant_title_heading(markdown, title);
+
     // Pre-process: resolve embeds and block references in the markdown source
-    let processed = resolve_embeds_and_refs(markdown, store, source_namespace, source_subgraph, 0);
+    let processed = resolve_embeds_and_refs(&markdown, store, source_namespace, source_subgraph, 0);
 
     // Pre-process: resolve query blocks
     let processed = crate::query::resolve_queries(&processed, store);
@@ -786,6 +823,55 @@ mod tests {
         assert!(result.html.contains("<h1>"));
         assert!(result.html.contains("Hello"));
         assert!(result.html.contains("<p>World</p>"));
+    }
+
+    #[test]
+    fn test_title_heading_matching_page_title_is_stripped() {
+        let store = empty_store();
+        let result = render_markdown_with_source(
+            "# Cyberia\n\nsome body text",
+            &store,
+            TEST_THEME,
+            None,
+            None,
+            "cyberia",
+        );
+        // The title bar already shows "Cyberia" — the body's own restatement
+        // of it is redundant and must not appear as a second <h1>.
+        assert!(!result.html.contains("<h1>"));
+        assert!(result.html.contains("some body text"));
+    }
+
+    #[test]
+    fn test_title_heading_not_matching_page_title_is_kept() {
+        let store = empty_store();
+        let result = render_markdown_with_source(
+            "# A Real Heading\n\nbody",
+            &store,
+            TEST_THEME,
+            None,
+            None,
+            "cyberia",
+        );
+        // Only an exact match is stripped — a heading that says something the
+        // title bar doesn't is real content.
+        assert!(result.html.contains("<h1>"));
+        assert!(result.html.contains("A Real Heading"));
+    }
+
+    #[test]
+    fn test_title_heading_stripped_case_insensitively() {
+        let store = empty_store();
+        let result = render_markdown_with_source(
+            "# WARRIORS\n\nthe roster",
+            &store,
+            TEST_THEME,
+            None,
+            None,
+            "warriors",
+        );
+        assert!(!result.html.contains("<h1>"));
+        assert!(result.html.contains("the roster"));
     }
 
     #[test]

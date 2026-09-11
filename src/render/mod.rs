@@ -47,6 +47,7 @@ pub fn render_single_page(
         &config.style.code.theme,
         page.namespace.as_deref(),
         page.subgraph.as_deref(),
+        &page.meta.title,
     );
     let ctx = context::build_page_context(
         page,
@@ -125,6 +126,7 @@ pub fn render_cached(
             &config.style.code.theme,
             page.namespace.as_deref(),
             page.subgraph.as_deref(),
+            &page.meta.title,
         );
 
         // Build template context
@@ -307,6 +309,7 @@ fn render_index(
                     &config.style.code.theme,
                     page.namespace.as_deref(),
                     page.subgraph.as_deref(),
+                    &page.meta.title,
                 );
                 let ctx = context::build_page_context(
                     page,
@@ -482,6 +485,7 @@ fn render_blog(
                 &config.style.code.theme,
                 p.namespace.as_deref(),
                 p.subgraph.as_deref(),
+                &p.meta.title,
             );
 
             minijinja::context! {
