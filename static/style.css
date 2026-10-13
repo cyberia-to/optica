@@ -330,8 +330,20 @@ pre span.storage.modifier { color: #22c55e; }
     display: block;
     width: 100%;
     overflow-x: auto;
+    /* contain absolutely positioned descendants (KaTeX .katex-mathml)
+       inside the table's own scroll box */
+    position: relative;
     border-collapse: collapse;
     margin: 1em 0;
+}
+
+/* a display formula wider than the column scrolls inside its own box
+   instead of widening the page */
+.page-content .katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
+    position: relative;
+    padding: 0.15em 0;
 }
 
 table {
@@ -351,7 +363,13 @@ td {
             transparent
         );
     text-align: left;
-    white-space: nowrap;
+    /* prose tables wrap; the pages-table columns that must stay on one
+       line opt back in with their own nowrap. a nowrap cell is what made
+       every wide table a horizontal scroller and, through KaTeX's
+       absolutely positioned MathML copy escaping that scroller, made the
+       whole page scroll sideways. */
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 th {
