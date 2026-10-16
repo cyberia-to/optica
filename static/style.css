@@ -6,7 +6,7 @@
 /* ============================================================
    PAGE TRANSITIONS — entrance fade on the article only.
    Animates .main-content from opacity 0 to 1 on every page load.
-   Sidebar and corner chrome stay still (no visual jolt on
+   Sidebar and corner chroma stay still (no visual jolt on
    identity badge / contribute fab / clock). No JS click
    interception; the old page paints normally until the browser
    commits navigation, then the new page's article fades in.
@@ -1222,7 +1222,7 @@ hr {
    POST-CONTENT SECTIONS
    Dimensions / Children / Linked References / Local Graph share one
    visual grammar: dimmed uppercase label, flat list underneath, no
-   boxes. Each section distinguishes itself by content, not chrome.
+   boxes. Each section distinguishes itself by content, not chroma.
    ============================================================ */
 
 .dimensional-peers,
@@ -2325,7 +2325,7 @@ body:has(.fullscreen-viz) .main-content {
     background: none;
 }
 /* Root-nested contents (the homepage and other root pages) — the
-   list itself is the menu row, so the row chrome goes away. */
+   list itself is the menu row, so the row chroma goes away. */
 li.sidebar-contents {
     padding: 0;
 }

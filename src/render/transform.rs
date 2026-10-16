@@ -198,16 +198,56 @@ fn fix_text_underscores(math: &str) -> String {
 
 /// Restore math blocks from placeholders in the rendered HTML.
 fn restore_math_blocks(html: &str, math_blocks: &[String]) -> String {
-    let re = Regex::new(r"MATH_PLACEHOLDER_(\d+)").unwrap();
-    re.replace_all(html, |caps: &regex::Captures| {
-        let idx: usize = caps[1].parse().unwrap_or(0);
-        if idx < math_blocks.len() {
-            fix_text_underscores(&math_blocks[idx])
-        } else {
-            caps[0].to_string()
+    MATH_PLACEHOLDER_RE
+        .replace_all(html, |caps: &regex::Captures| {
+            let idx: usize = caps[1].parse().unwrap_or(0);
+            if idx < math_blocks.len() {
+                fix_text_underscores(&math_blocks[idx])
+            } else {
+                caps[0].to_string()
+            }
+        })
+        .to_string()
+}
+
+/// Inner TeX of a `$...$` / `$$...$$` span, for TOC labels and heading slugs.
+/// KaTeX only walks `.main-content`, so the sidebar cannot keep the delimiters.
+fn math_to_plain(math: &str) -> String {
+    let s = math.trim();
+    let inner = s
+        .strip_prefix("$$")
+        .and_then(|r| r.strip_suffix("$$"))
+        .or_else(|| s.strip_prefix('$').and_then(|r| r.strip_suffix('$')))
+        .unwrap_or(s);
+    inner.trim().to_string()
+}
+
+fn restore_math_plain(text: &str, math_blocks: &[String]) -> String {
+    if math_blocks.is_empty() || !text.contains("MATH_PLACEHOLDER_") {
+        return text.to_string();
+    }
+    MATH_PLACEHOLDER_RE
+        .replace_all(text, |caps: &regex::Captures| {
+            let idx: usize = caps[1].parse().unwrap_or(0);
+            math_blocks
+                .get(idx)
+                .map(|m| math_to_plain(m))
+                .unwrap_or_else(|| caps[0].to_string())
+        })
+        .into_owned()
+}
+
+fn restore_toc_math(mut entries: Vec<TocEntry>, math_blocks: &[String]) -> Vec<TocEntry> {
+    if math_blocks.is_empty() {
+        return entries;
+    }
+    for e in &mut entries {
+        if e.text.contains("MATH_PLACEHOLDER_") {
+            e.text = restore_math_plain(&e.text, math_blocks);
+            e.id = slug::slugify(&e.text);
         }
-    })
-    .to_string()
+    }
+    entries
 }
 
 /// Render markdown to HTML with wikilink resolution, embed expansion, block refs, and queries.
@@ -284,8 +324,10 @@ pub fn render_markdown_with_source(
 
     let root = comrak::parse_document(&arena, &processed, &options);
 
-    // Extract TOC from headings before transforming
-    let toc_entries = toc::extract_toc(root);
+    // Extract TOC from headings before transforming. Math is still a
+    // MATH_PLACEHOLDER_N token here — restore it in the TOC labels/ids and
+    // in heading anchors so the sidebar never leaks the sentinel.
+    let toc_entries = restore_toc_math(toc::extract_toc(root), &math_blocks);
 
     // Add heading IDs for TOC anchors. Must run BEFORE transform_wikilinks and
     // on the same heading-text derivation as extract_toc: a heading that is a
@@ -293,7 +335,7 @@ pub fn render_markdown_with_source(
     // the transform, whose text no AST walk can see — the heading would get no
     // anchor while the TOC links to one computed from the raw pre-transform
     // text (placeholder included). Same AST + same text ⇒ ids always match.
-    inject_heading_ids(root, &arena);
+    inject_heading_ids(root, &arena, &math_blocks);
 
     // Transform wikilinks to proper HTML links
     transform_wikilinks(root, store, &arena, source_namespace, source_subgraph);
@@ -305,9 +347,7 @@ pub fn render_markdown_with_source(
     render_svgbob_blocks(root);
 
     // Render to HTML with syntax highlighting (CSS class mode — no inline styles)
-    let adapter = SyntectAdapterBuilder::new()
-        .css()
-        .build();
+    let adapter = SyntectAdapterBuilder::new().css().build();
     let mut plugins = Plugins::default();
     plugins.render.codefence_syntax_highlighter = Some(&adapter);
 
@@ -332,7 +372,11 @@ pub fn render_markdown_with_source(
 }
 
 /// Inject id attributes into heading nodes by wrapping with anchor spans.
-fn inject_heading_ids<'a>(root: &'a AstNode<'a>, arena: &'a Arena<AstNode<'a>>) {
+fn inject_heading_ids<'a>(
+    root: &'a AstNode<'a>,
+    arena: &'a Arena<AstNode<'a>>,
+    math_blocks: &[String],
+) {
     let mut headings: Vec<(&'a AstNode<'a>, String)> = Vec::new();
 
     for node in root.descendants() {
@@ -340,7 +384,7 @@ fn inject_heading_ids<'a>(root: &'a AstNode<'a>, arena: &'a Arena<AstNode<'a>>) 
         if let NodeValue::Heading(_) = data.value {
             // Same derivation as toc::extract_toc — see the call-site comment
             // in render_markdown_with_source for why these must agree.
-            let text = toc::heading_text(node);
+            let text = restore_math_plain(&toc::heading_text(node), math_blocks);
             if !text.is_empty() {
                 let id = slug::slugify(&text);
                 headings.push((node, id));
@@ -360,6 +404,8 @@ fn inject_heading_ids<'a>(root: &'a AstNode<'a>, arena: &'a Arena<AstNode<'a>>) 
 }
 
 lazy_static::lazy_static! {
+    static ref MATH_PLACEHOLDER_RE: Regex = Regex::new(r"MATH_PLACEHOLDER_(\d+)").unwrap();
+
     /// Matches `{{embed [[Page Name]]}}` page embeds
     static ref EMBED_PAGE_RE: Regex = Regex::new(
         r"\{\{embed\s+\[\[([^\]]+)\]\]\s*\}\}"
@@ -395,30 +441,33 @@ fn resolve_wikilinks_in_code(html: &str, store: &PageStore) -> String {
         ).unwrap();
     }
 
-    CODE_WIKILINK.replace_all(html, |caps: &regex::Captures| {
-        let page_name = &caps[1];
-        let display = caps.get(2).map(|m| m.as_str()).unwrap_or_else(|| {
-            // Show last path segment by default
-            page_name.rsplit('/').next().unwrap_or(page_name)
-        });
-        let slug = slugify_page_name(page_name);
-        let resolved = if store.pages.contains_key(&slug) {
-            slug.clone()
-        } else if let Some(canonical) = store.alias_map.get(&slug) {
-            canonical.clone()
-        } else {
-            slug.clone()
-        };
-        let class = if store.pages.contains_key(&resolved) || store.alias_map.contains_key(&slug) {
-            "internal-link"
-        } else {
-            "internal-link stub-link"
-        };
-        format!(
-            r#"<a href="/{}" class="{}" data-page="{}">{}</a>"#,
-            resolved, class, resolved, display
-        )
-    }).to_string()
+    CODE_WIKILINK
+        .replace_all(html, |caps: &regex::Captures| {
+            let page_name = &caps[1];
+            let display = caps.get(2).map(|m| m.as_str()).unwrap_or_else(|| {
+                // Show last path segment by default
+                page_name.rsplit('/').next().unwrap_or(page_name)
+            });
+            let slug = slugify_page_name(page_name);
+            let resolved = if store.pages.contains_key(&slug) {
+                slug.clone()
+            } else if let Some(canonical) = store.alias_map.get(&slug) {
+                canonical.clone()
+            } else {
+                slug.clone()
+            };
+            let class =
+                if store.pages.contains_key(&resolved) || store.alias_map.contains_key(&slug) {
+                    "internal-link"
+                } else {
+                    "internal-link stub-link"
+                };
+            format!(
+                r#"<a href="/{}" class="{}" data-page="{}">{}</a>"#,
+                resolved, class, resolved, display
+            )
+        })
+        .to_string()
 }
 
 fn resolve_embeds_and_refs(
@@ -576,7 +625,9 @@ fn extract_block(markdown: &str, block_id: &str) -> Option<String> {
     // Find the line whose trimmed end is exactly the marker or ends with ` ^id`.
     let idx = lines.iter().position(|line| {
         let t = line.trim_end();
-        t == marker || t.strip_suffix(&marker).is_some_and(|p| p.ends_with(char::is_whitespace))
+        t == marker
+            || t.strip_suffix(&marker)
+                .is_some_and(|p| p.ends_with(char::is_whitespace))
     })?;
 
     // Walk up to the paragraph start (preceding blank line or top of file).
@@ -673,12 +724,8 @@ fn transform_wikilinks<'a>(
         // fallback. Without this, `[[visit]]` from `cyber valley/cyb.land.md`
         // wouldn't find `cyber valley/cyb.land/visit` and would render as a
         // stub-link to the top-level basename URL.
-        let resolved_slug = crate::graph::links::resolve_link(
-            &url,
-            source_namespace,
-            source_subgraph,
-            store,
-        );
+        let resolved_slug =
+            crate::graph::links::resolve_link(&url, source_namespace, source_subgraph, store);
 
         let class = if store.stub_pages.contains(&resolved_slug) {
             "internal-link stub-link"
@@ -826,6 +873,41 @@ mod tests {
     }
 
     #[test]
+    fn toc_restores_inline_math_in_headings() {
+        let store = empty_store();
+        let result = render_markdown(
+            "### how $V$ splits — half burn, half to everyone\n\nbody $G$",
+            &store,
+            TEST_THEME,
+        );
+        assert!(
+            result
+                .toc
+                .iter()
+                .all(|e| !e.text.contains("MATH_PLACEHOLDER") && !e.id.contains("math-placeholder")),
+            "placeholder leaked into TOC: {:?}",
+            result.toc
+        );
+        let entry = result
+            .toc
+            .iter()
+            .find(|e| e.text.contains("splits"))
+            .expect("heading in toc");
+        assert_eq!(entry.text, "how V splits — half burn, half to everyone");
+        assert_eq!(entry.id, slug::slugify(&entry.text));
+        assert!(
+            result.html.contains(&format!("id=\"{}\"", entry.id)),
+            "heading anchor must match TOC id: {}",
+            result.html
+        );
+        assert!(
+            result.html.contains("$V$") && result.html.contains("$G$"),
+            "body math kept for KaTeX: {}",
+            result.html
+        );
+    }
+
+    #[test]
     fn test_title_heading_matching_page_title_is_stripped() {
         let store = empty_store();
         let result = render_markdown_with_source(
@@ -876,7 +958,10 @@ mod tests {
 
     #[test]
     fn test_embed_whole_page() {
-        let store = store_with_content("Languages", "intro\n\n## the roster\n\n| a | b |\n\n## other\n\ntail");
+        let store = store_with_content(
+            "Languages",
+            "intro\n\n## the roster\n\n| a | b |\n\n## other\n\ntail",
+        );
         let out = resolve_embeds_and_refs("{{embed [[Languages]]}}", &store, None, None, 0);
         assert!(out.contains("intro"));
         assert!(out.contains("the roster"));
@@ -889,21 +974,25 @@ mod tests {
             "Languages",
             "intro text\n\n## the roster\n\n| a | b |\n| 1 | 2 |\n\n## other section\n\nignored tail",
         );
-        let out = resolve_embeds_and_refs("{{embed [[Languages#the roster]]}}", &store, None, None, 0);
-        assert!(out.contains("## the roster"), "section heading included: {out}");
+        let out =
+            resolve_embeds_and_refs("{{embed [[Languages#the roster]]}}", &store, None, None, 0);
+        assert!(
+            out.contains("## the roster"),
+            "section heading included: {out}"
+        );
         assert!(out.contains("| 1 | 2 |"), "section body included");
         assert!(!out.contains("intro text"), "earlier content excluded");
         assert!(!out.contains("ignored tail"), "next section excluded");
-        assert!(out.contains("/languages#the-roster"), "header anchors the section");
+        assert!(
+            out.contains("/languages#the-roster"),
+            "header anchors the section"
+        );
     }
 
     #[test]
     fn test_embed_section_stops_at_same_level() {
         // A deeper heading inside the section must NOT terminate it.
-        let store = store_with_content(
-            "Doc",
-            "## one\n\nA\n\n### one-sub\n\nB\n\n## two\n\nC",
-        );
+        let store = store_with_content("Doc", "## one\n\nA\n\n### one-sub\n\nB\n\n## two\n\nC");
         let out = resolve_embeds_and_refs("{{embed [[Doc#one]]}}", &store, None, None, 0);
         assert!(out.contains("### one-sub"), "nested subsection kept");
         assert!(out.contains("B"));
@@ -917,9 +1006,15 @@ mod tests {
             "## real\n\n```sh\n# not a heading\n```\n\nbody\n\n## next\n\nnope",
         );
         let out = resolve_embeds_and_refs("{{embed [[Doc#real]]}}", &store, None, None, 0);
-        assert!(out.contains("# not a heading"), "fenced hash preserved in section");
+        assert!(
+            out.contains("# not a heading"),
+            "fenced hash preserved in section"
+        );
         assert!(out.contains("body"));
-        assert!(!out.contains("nope"), "next section excluded despite fenced hash");
+        assert!(
+            !out.contains("nope"),
+            "next section excluded despite fenced hash"
+        );
     }
 
     #[test]
@@ -929,7 +1024,10 @@ mod tests {
             "first para\n\nthe canonical claim spanning\ntwo lines ^claim1\n\nafter",
         );
         let out = resolve_embeds_and_refs("{{embed [[Doc#^claim1]]}}", &store, None, None, 0);
-        assert!(out.contains("the canonical claim spanning"), "block start included");
+        assert!(
+            out.contains("the canonical claim spanning"),
+            "block start included"
+        );
         assert!(out.contains("two lines"), "full paragraph included");
         assert!(!out.contains("^claim1"), "block marker stripped");
         assert!(!out.contains("first para"), "earlier paragraph excluded");
@@ -945,7 +1043,11 @@ mod tests {
             TEST_THEME,
         );
         assert!(result.html.contains("a claim worth citing"));
-        assert!(!result.html.contains("^claim1"), "marker hidden: {}", result.html);
+        assert!(
+            !result.html.contains("^claim1"),
+            "marker hidden: {}",
+            result.html
+        );
     }
 
     #[test]
@@ -953,7 +1055,11 @@ mod tests {
         // A mid-line caret (exponent) must survive; only end-of-line anchors go.
         let store = empty_store();
         let result = render_markdown("the value 2^3 equals eight", &store, TEST_THEME);
-        assert!(result.html.contains("2^3"), "inline caret preserved: {}", result.html);
+        assert!(
+            result.html.contains("2^3"),
+            "inline caret preserved: {}",
+            result.html
+        );
     }
 
     #[test]
@@ -1015,11 +1121,7 @@ mod tests {
     fn test_text_underscore_fix() {
         // Already-escaped \_ should be preserved for KaTeX
         let store = empty_store();
-        let result = render_markdown(
-            "$\\text{type\\_tag}(a)$",
-            &store,
-            TEST_THEME,
-        );
+        let result = render_markdown("$\\text{type\\_tag}(a)$", &store, TEST_THEME);
         assert!(
             result.html.contains("\\text{type\\_tag}"),
             "escaped underscore should be preserved in \\text{{}}: {}",
@@ -1027,11 +1129,7 @@ mod tests {
         );
 
         // Bare underscores in \text{} should be escaped to \_
-        let result = render_markdown(
-            "$\\text{staking_share}$",
-            &store,
-            TEST_THEME,
-        );
+        let result = render_markdown("$\\text{staking_share}$", &store, TEST_THEME);
         assert!(
             result.html.contains("\\text{staking\\_share}"),
             "bare underscore should be escaped in \\text{{}}: {}",
@@ -1051,7 +1149,11 @@ mod tests {
     #[test]
     fn test_toc_generation() {
         let store = empty_store();
-        let result = render_markdown("# First\n\n## Second\n\n### Third\n\nContent", &store, TEST_THEME);
+        let result = render_markdown(
+            "# First\n\n## Second\n\n### Third\n\nContent",
+            &store,
+            TEST_THEME,
+        );
         assert_eq!(result.toc.len(), 3);
         assert_eq!(result.toc[0].text, "First");
         assert_eq!(result.toc[0].level, 1);
@@ -1094,8 +1196,11 @@ mod tests {
     fn test_toc_mixed_text_and_wikilink_heading() {
         // wikilink embedded in surrounding heading text keeps its alias inline.
         let store = store_with_page("cybics/mass");
-        let result =
-            render_markdown("## the [[cybics/mass|mass]] layer\n\ncontent", &store, TEST_THEME);
+        let result = render_markdown(
+            "## the [[cybics/mass|mass]] layer\n\ncontent",
+            &store,
+            TEST_THEME,
+        );
         assert_eq!(result.toc.len(), 1);
         assert_eq!(result.toc[0].text, "the mass layer");
         assert_eq!(result.toc[0].id, "the-mass-layer");
