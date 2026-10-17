@@ -147,7 +147,7 @@ pub fn scan(input_dir: &Path, content_config: &ContentSection) -> Result<Discove
         // as real pages instead of raw file dumps. The root README is already
         // registered above with the repo name; skip it here to avoid a dup.
         let skip_dirs: std::collections::HashSet<&str> =
-            [".git", "target", "node_modules", "build"].into();
+            [".git", ".worktrees", "target", "node_modules", "build"].into();
         for entry in WalkDir::new(&input_dir)
             .into_iter()
             .filter_entry(|e| {
@@ -249,7 +249,7 @@ pub fn scan(input_dir: &Path, content_config: &ContentSection) -> Result<Discove
     // Directories to skip entirely — prevents WalkDir from descending into
     // build/ (thousands of generated HTML files), .git/, target/, etc.
     let skip_dirs: std::collections::HashSet<&str> =
-        [".git", "target", "node_modules", "build"].into();
+        [".git", ".worktrees", "target", "node_modules", "build"].into();
 
     // Scan all other files in the repo (outside graph/, blog/, media/)
     for entry in WalkDir::new(&input_dir)

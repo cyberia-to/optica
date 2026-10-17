@@ -389,12 +389,13 @@ fn watch_and_rebuild_loop(
                 changed.extend(more);
             }
 
-            // Filter to content files, excluding .git/target/node_modules/build.
+            // Filter to content files, excluding .git/.worktrees/target/node_modules/build.
             // Accept any file (not just .md) — the scanner handles file type classification.
             changed.retain(|p| {
                 let path_str = p.to_string_lossy();
                 let canon = p.canonicalize().unwrap_or_else(|_| p.clone());
                 !path_str.contains("/.git/")
+                    && !path_str.contains("/.worktrees/")
                     && !path_str.contains("/target/")
                     && !path_str.contains("/node_modules/")
                     && !path_str.contains("/build/")
