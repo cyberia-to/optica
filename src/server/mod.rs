@@ -3,7 +3,7 @@
 // crystal-type: source
 // crystal-domain: comp
 // ---
-mod reload;
+pub mod reload;
 
 use crate::config::SiteConfig;
 use anyhow::Result;
@@ -21,7 +21,7 @@ pub fn serve(
     live_reload: bool,
     open_browser: bool,
     subgraphs: Option<&Path>,
-    build_done: Option<Arc<AtomicBool>>,
+    seed: Option<std::sync::mpsc::Receiver<reload::BuildSeed>>,
 ) -> Result<()> {
     let output_dir = config.build.output_dir.clone();
     let addr = format!("{}:{}", bind, port);
@@ -73,7 +73,7 @@ pub fn serve(
             config.clone(),
             build_version.clone(),
             subgraphs.map(|p| p.to_path_buf()),
-            build_done,
+            seed,
         );
     }
 

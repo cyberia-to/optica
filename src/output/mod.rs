@@ -6,7 +6,7 @@
 mod feed;
 pub mod files;
 pub mod graph;
-mod media;
+pub mod media;
 mod search;
 mod sitemap;
 
