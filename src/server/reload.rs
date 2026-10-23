@@ -562,6 +562,13 @@ fn try_fast_path(
         if !path.exists() {
             return None; // File was deleted — need full scan
         }
+        // A subgraph's own census changed: its children may have come or
+        // gone, which only the full path (decls reloaded, ingest) can see.
+        if path.file_name().and_then(|n| n.to_str())
+            == Some(crate::scanner::subgraph_config::NESTED_FILE)
+        {
+            return None;
+        }
         let sg = cache.subgraph_repo_by_name.iter()
             .find(|(_, repo)| path.starts_with(repo))
             .map(|(name, _)| name.clone());
