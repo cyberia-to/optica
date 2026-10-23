@@ -282,8 +282,13 @@ pub fn render_cached(
         }
     }
 
-    // Render unified files page (all pages with size column)
-    if any_dirty {
+    // Render unified files page (all pages with size column) — tens of MB,
+    // so only when a page was added or removed (`__pages__`), never for a
+    // title or a tag.
+    let pages_changed = dirty_ids
+        .map(|d| d.contains("__pages__"))
+        .unwrap_or(true);
+    if pages_changed {
         let files_html = render_files_page(store, config, &env)?;
         push_synthetic!("__files__", files_html, "/files/index.html");
     } else if let Some(cached) = cache.get("__files__") {

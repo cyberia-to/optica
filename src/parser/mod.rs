@@ -362,6 +362,51 @@ fn parse_non_md_file(file: &DiscoveredFile) -> Result<ParsedPage> {
         }
     }
 
+    // A file beyond this size is shown as a preview, not inlined: a 500 MB
+    // data file rendered as a code block became a 500 MB page, and the
+    // build spent its minutes on pages nobody opens.
+    const INLINE_LIMIT: u64 = 1 << 20;
+    const PREVIEW_BYTES: usize = 64 << 10;
+    let file_len = std::fs::metadata(&file.path).map(|m| m.len()).unwrap_or(0);
+    if file_len > INLINE_LIMIT {
+        let preview = std::fs::File::open(&file.path)
+            .ok()
+            .and_then(|mut f| {
+                use std::io::Read;
+                let mut buf = vec![0u8; PREVIEW_BYTES];
+                let n = f.read(&mut buf).ok()?;
+                buf.truncate(n);
+                String::from_utf8(buf).ok()
+            });
+        let lang = extension_to_lang(&ext);
+        let content_md = match preview {
+            Some(text) => format!(
+                "Large file: `{}` — {} — the first {} KB:\n\n```{}\n{}\n```\n",
+                file.name, format_size(file_len), PREVIEW_BYTES >> 10, lang, text
+            ),
+            None => format!("Large binary file: `{}`\n\nSize: {}\nType: {}", file.name, format_size(file_len), if ext.is_empty() { "unknown" } else { &ext }),
+        };
+        return Ok(ParsedPage {
+            id,
+            meta: PageMeta {
+                title: file.name.clone(),
+                properties: HashMap::new(),
+                tags,
+                public: Some(true),
+                aliases: Vec::new(),
+                date: None,
+                icon: None,
+                menu_order: None,
+                stake: None,
+            },
+            kind: PageKind::File,
+            source_path: file.path.clone(),
+            namespace,
+            subgraph: file.subgraph.clone(),
+            content_md,
+            outgoing_links: Vec::new(),
+        });
+    }
     // Try to read as text
     let (content_md, outgoing_links) = match std::fs::read_to_string(&file.path) {
         Ok(text) => {

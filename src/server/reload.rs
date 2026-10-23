@@ -1080,6 +1080,9 @@ fn incremental_rebuild(
     if !cache.initialized || pages_added_or_removed || tags_changed || meta_changed {
         dirty_ids.insert("__structural__".to_string());
     }
+    if !cache.initialized || pages_added_or_removed {
+        dirty_ids.insert("__pages__".to_string());
+    }
 
     let t_graphed = t_start.elapsed();
     let dirty_count = dirty_ids.len();
