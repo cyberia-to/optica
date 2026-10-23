@@ -24,7 +24,7 @@ pub struct RenderedPage {
 }
 
 pub fn render_all(store: &PageStore, config: &SiteConfig) -> Result<Vec<RenderedPage>> {
-    render_cached(store, config, &mut HashMap::new(), None)
+    render_cached(store, config, &mut HashMap::new(), None).map(|(pages, _)| pages)
 }
 
 /// Create a template environment for use with `render_single_page`.
@@ -76,26 +76,37 @@ pub fn render_single_page(
 }
 
 /// Render pages with optional caching. When `dirty_ids` is Some, only pages in
-/// the dirty set are re-rendered; clean pages are served from `cache`.
-/// When `dirty_ids` is None, all pages are rendered (full rebuild).
-/// The cache is updated with newly rendered pages.
+/// the dirty set are re-rendered; clean pages stay in `cache` and are NOT
+/// returned — returning them meant cloning every page's HTML (gigabytes on a
+/// 30k-page graph) on every edit, which under memory pressure stalled a
+/// rebuild for the better part of an hour. When `dirty_ids` is None, all
+/// pages are rendered (full rebuild). The cache is updated with newly
+/// rendered pages; the returned Vec and set hold exactly what was rendered.
 pub fn render_cached(
     store: &PageStore,
     config: &SiteConfig,
     cache: &mut HashMap<PageId, RenderedPage>,
     dirty_ids: Option<&HashSet<PageId>>,
-) -> Result<Vec<RenderedPage>> {
+) -> Result<(Vec<RenderedPage>, HashSet<PageId>)> {
     let env = templates::setup_environment(config.build.template_dir.as_deref(), config)?;
 
     // Pre-compute dimensional peer index once — O(n) instead of O(n²)
     let peer_index = context::build_peer_index(store, config);
 
     let mut rendered = Vec::new();
+    // The ids rendered in this call, as opposed to served from the cache:
+    // the caller writes exactly these to disk.
+    let mut fresh: HashSet<PageId> = HashSet::new();
 
     // Reserved URL slugs — synthetic pages take priority over regular pages
     let reserved_slugs: std::collections::HashSet<&str> =
         ["tags", "blog", "graph", "files"].into_iter().collect();
 
+    // Decide once which pages need rendering; the clean ones come from the
+    // cache, the rest are rendered in parallel — markdown, context and the
+    // template are all pure functions of the store, so every core takes a
+    // share. This is what turns a 34k-page build from minutes into seconds.
+    let mut work: Vec<(&PageId, &crate::parser::ParsedPage)> = Vec::new();
     for (page_id, page) in &store.pages {
         // Skip regular pages that conflict with synthetic page URLs
         if reserved_slugs.contains(page_id.as_str()) {
@@ -109,13 +120,20 @@ pub fn render_cached(
         // Check cache: skip rendering if page is clean
         if let Some(dirty) = dirty_ids {
             if !dirty.contains(page_id) {
-                if let Some(cached) = cache.get(page_id) {
-                    rendered.push(cached.clone());
+                if cache.contains_key(page_id) {
                     continue;
                 }
             }
         }
+        work.push((page_id, page));
+    }
 
+    use rayon::prelude::*;
+    let results: Vec<Result<RenderedPage>> = work
+        .par_iter()
+        .map(|(page_id, page)| -> Result<RenderedPage> {
+        let page_id: &PageId = page_id;
+        let page: &crate::parser::ParsedPage = page;
         // Transform markdown to HTML with wikilink resolution. Pass source
         // page's namespace + subgraph so wikilinks like `[[visit]]` from
         // `cyber valley/cyb.land.md` resolve to `cyber valley/cyb.land/visit`
@@ -154,12 +172,17 @@ pub fn render_cached(
             format!("/{}.html", page_id)
         };
 
-        let rp = RenderedPage {
+        Ok(RenderedPage {
             page_id: page_id.clone(),
             html,
             url_path,
-        };
-        cache.insert(page_id.clone(), rp.clone());
+        })
+        })
+        .collect();
+    for rp in results {
+        let rp = rp?;
+        fresh.insert(rp.page_id.clone());
+        cache.insert(rp.page_id.clone(), rp.clone());
         rendered.push(rp);
     }
 
@@ -180,10 +203,9 @@ pub fn render_cached(
                     html: $html,
                     url_path: $url.to_string(),
                 };
+                fresh.insert(id.clone());
                 cache.insert(id, rp.clone());
                 rendered.push(rp);
-            } else if let Some(cached) = cache.get(&id) {
-                rendered.push(cached.clone());
             }
         }};
     }
@@ -192,43 +214,54 @@ pub fn render_cached(
     if any_dirty {
         let index_html = render_index(store, config, &env)?;
         push_synthetic!("__index__", index_html, "/index.html");
-    } else if let Some(cached) = cache.get("__index__") {
-        rendered.push(cached.clone());
     }
 
-    // Render tag pages (only for public pages)
+    // Render tag pages (only for public pages). A tag page is rendered when
+    // the caller marked it (`__tag__<slug>` in the dirty set: its members or
+    // their titles changed), when nothing is cached for it, or on a full
+    // render; the big tags list tens of thousands of pages, so this is the
+    // cost of a structural change, and it runs in parallel.
     let public_tags = store.public_tag_index(&config.content);
+    let mut tag_work: Vec<(&String, &Vec<PageId>, String, String)> = Vec::new();
     for (tag, page_ids) in &public_tags {
         let tag_slug = slug::slugify(tag);
         let id = format!("__tag__{}", tag_slug);
-        if any_dirty {
+        let want = match dirty_ids {
+            None => true,
+            Some(d) => d.contains(&id) || !cache.contains_key(&id),
+        };
+        if want {
+            tag_work.push((tag, page_ids, tag_slug, id));
+        }
+    }
+    let tag_results: Vec<Result<RenderedPage>> = tag_work
+        .par_iter()
+        .map(|(tag, page_ids, tag_slug, id)| -> Result<RenderedPage> {
             let tag_html = render_tag_page(tag, page_ids, store, config, &env)?;
-            let rp = RenderedPage {
+            Ok(RenderedPage {
                 page_id: id.clone(),
                 html: tag_html,
                 url_path: format!("/tags/{}/index.html", tag_slug),
-            };
-            cache.insert(id, rp.clone());
-            rendered.push(rp);
-        } else if let Some(cached) = cache.get(&id) {
-            rendered.push(cached.clone());
-        }
+            })
+        })
+        .collect();
+    for rp in tag_results {
+        let rp = rp?;
+        fresh.insert(rp.page_id.clone());
+        cache.insert(rp.page_id.clone(), rp.clone());
+        rendered.push(rp);
     }
 
     // Render tags index page
     if any_dirty {
         let tags_html = render_tags_index(store, config, &env)?;
         push_synthetic!("__tags_index__", tags_html, "/tags/index.html");
-    } else if let Some(cached) = cache.get("__tags_index__") {
-        rendered.push(cached.clone());
     }
 
     // Render blog page (date-sorted page listing)
     if any_dirty {
         let blog_html = render_blog(store, config, &env)?;
         push_synthetic!("__blog__", blog_html, "/blog/index.html");
-    } else if let Some(cached) = cache.get("__blog__") {
-        rendered.push(cached.clone());
     }
 
     // Render graph visualization page
@@ -236,17 +269,18 @@ pub fn render_cached(
         if any_dirty {
             let graph_html = render_graph_page(store, config, &env)?;
             push_synthetic!("__graph__", graph_html, "/graph/index.html");
-        } else if let Some(cached) = cache.get("__graph__") {
-            rendered.push(cached.clone());
         }
     }
 
-    // Render unified files page (all pages with size column)
-    if any_dirty {
+    // Render unified files page (all pages with size column) — tens of MB,
+    // so only when a page was added or removed (`__pages__`), never for a
+    // title or a tag.
+    let pages_changed = dirty_ids
+        .map(|d| d.contains("__pages__"))
+        .unwrap_or(true);
+    if pages_changed {
         let files_html = render_files_page(store, config, &env)?;
         push_synthetic!("__files__", files_html, "/files/index.html");
-    } else if let Some(cached) = cache.get("__files__") {
-        rendered.push(cached.clone());
     }
 
     // Render 404 page — Netlify and GitHub Pages auto-serve /404.html
@@ -255,8 +289,6 @@ pub fn render_cached(
     if any_dirty {
         let not_found_html = render_404(store, config, &env)?;
         push_synthetic!("__404__", not_found_html, "/404.html");
-    } else if let Some(cached) = cache.get("__404__") {
-        rendered.push(cached.clone());
     }
 
     // Generate redirect pages for aliases
@@ -266,11 +298,14 @@ pub fn render_cached(
             continue;
         }
         let alias_id = format!("__alias__{}", alias_slug);
-        if !any_dirty {
-            if let Some(cached) = cache.get(&alias_id) {
-                rendered.push(cached.clone());
-                continue;
-            }
+        // A redirect is rewritten only when the caller marked it (new alias,
+        // new target) or nothing is cached for it.
+        let want = match dirty_ids {
+            None => true,
+            Some(d) => d.contains(&alias_id) || !cache.contains_key(&alias_id),
+        };
+        if !want {
+            continue;
         }
         let redirect_html = format!(
             r#"<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/{canonical_id}"><link rel="canonical" href="/{canonical_id}"><title>Redirecting…</title></head><body>Redirecting to <a href="/{canonical_id}">/{canonical_id}</a></body></html>"#
@@ -280,11 +315,12 @@ pub fn render_cached(
             html: redirect_html,
             url_path: format!("/{}/index.html", alias_slug),
         };
+        fresh.insert(alias_id.clone());
         cache.insert(alias_id, rp.clone());
         rendered.push(rp);
     }
 
-    Ok(rendered)
+    Ok((rendered, fresh))
 }
 
 fn render_index(

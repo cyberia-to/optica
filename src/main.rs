@@ -259,18 +259,22 @@ fn main() -> Result<()> {
             // Serve immediately: the port opens on the previous snapshot while
             // the fresh build runs in the background. A restart therefore never
             // takes the site down — stale-for-minutes beats dead-for-minutes.
+            // The build hands the watcher everything it produced — parses,
+            // store, rendered pages — so no warm-up repeats the work.
+            let (seed_tx, seed_rx) = std::sync::mpsc::channel();
             {
                 let cfg = config.clone();
                 let quiet = cli.quiet;
                 let subs = subgraphs.clone();
                 std::thread::spawn(move || {
-                    if let Err(e) = build_site(&cfg, quiet, subs.as_deref()) {
-                        eprintln!("initial build failed: {e:#}");
+                    match optica::server::reload::build_full(&cfg, quiet, subs.as_deref()) {
+                        Ok(seed) => { let _ = seed_tx.send(seed); }
+                        Err(e) => eprintln!("initial build failed: {e:#}"),
                     }
                 });
             }
 
-            optica::server::serve(&config, &bind, port, !no_reload, open, subgraphs.as_deref())?;
+            optica::server::serve(&config, &bind, port, !no_reload, open, subgraphs.as_deref(), Some(seed_rx))?;
         }
         Commands::Init { path } => {
             std::fs::create_dir_all(&path)?;
@@ -332,207 +336,11 @@ fn main() -> Result<()> {
 }
 
 fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path>) -> Result<()> {
-    let start = std::time::Instant::now();
-
-    if !quiet {
-        println!("{} {}", "Building".cyan().bold(), config.site.title);
-    }
-
-    // Step 1: Scan root graph
-    let discovered = optica::scanner::scan(&config.build.input_dir, &config.content)?;
-    if !quiet {
-        println!(
-            "  {} Discovered {} pages, {} journals, {} media, {} files",
-            "Scan".dimmed(),
-            discovered.pages.len(),
-            discovered.journals.len(),
-            discovered.media.len(),
-            discovered.files.len()
-        );
-    }
-
-    // Step 2: Parse root graph
-    let mut parsed_pages = optica::parser::parse_all(&discovered)?;
-    if !quiet {
-        println!("  {} Parsed {} pages", "Parse".dimmed(), parsed_pages.len());
-    }
-
-    // Step 3: Load subgraph decls (TOML config), enforce namespace monopoly,
-    // then ingest each via the single shared pipeline.
-    if !quiet {
-        if let Some(path) = subgraphs_override {
-            println!(
-                "  {} Loaded subgraphs from {}",
-                "Config".dimmed(),
-                path.display()
-            );
-        }
-    }
-    let subgraph_decls = optica::scanner::subgraph::load_subgraph_decls(subgraphs_override)?;
-
-    if !subgraph_decls.is_empty() {
-        let subgraph_namespaces: Vec<String> =
-            subgraph_decls.iter().map(|d| d.mount.clone()).filter(|m| !m.is_empty()).collect();
-        let evicted = optica::scanner::subgraph::enforce_namespace_monopoly(
-            &mut parsed_pages,
-            &subgraph_namespaces,
-        );
-        if !quiet && !evicted.is_empty() {
-            for (id, reason) in &evicted {
-                println!("  {} Evicted '{}': {}", "Monopoly".yellow(), id, reason);
-            }
-        }
-
-        for decl in &subgraph_decls {
-            let ingestion = optica::scanner::subgraph::ingest_subgraph(decl, &mut parsed_pages)?;
-            if !quiet {
-                println!(
-                    "  {} Subgraph '{}': {} pages, {} files",
-                    "Scan".dimmed(),
-                    ingestion.stats.name,
-                    ingestion.stats.page_count,
-                    ingestion.stats.file_count
-                );
-            }
-            parsed_pages.extend(ingestion.pages);
-        }
-    }
-
-    // Synthesize an index page for every namespace dir lacking one — covers
-    // both root-graph and subgraph dirs in a single pass. Prevents the
-    // "folder link in sidebar → 404 on click" failure mode.
-    let subgraph_names: Vec<String> = subgraph_decls.iter().map(|d| d.name.clone()).collect();
-    optica::parser::synthesize_dir_indexes(&mut parsed_pages, &subgraph_names);
-
-    // Rewrite `../media/<name>` → `<gateway>/ipfs/<cid>` from the cache map.
-    // Auto-detects `<input_dir>/ipfs-cache.json` when no flag/config is set.
-    let (count, map_path) = optica::parser::apply_ipfs_rewrites_for_config(&mut parsed_pages, config)?;
-    if !quiet {
-        if let Some(p) = map_path {
-            println!(
-                "  {} Rewrote {} media ref{} via {}",
-                "IPFS".dimmed(),
-                count,
-                if count == 1 { "" } else { "s" },
-                p.display()
-            );
-        }
-    }
-
-    // Step 4: Build graph
-    let mut page_store = optica::graph::build_graph(parsed_pages)?;
-    for decl in &subgraph_decls {
-        if decl.is_private {
-            page_store.subgraph_private.insert(decl.name.clone());
-        }
-    }
-    if !quiet {
-        let total_links: usize = page_store.forward_links.values().map(|v| v.len()).sum();
-        let public_count = page_store.public_pages(&config.content).len();
-        let total_count = page_store.pages.len();
-        println!(
-            "  {} Built graph with {} links",
-            "Graph".dimmed(),
-            total_links
-        );
-
-        if config.content.public_only && public_count < total_count {
-            println!(
-                "  {} {}/{} pages are public (set default_public = true or add public:: true to pages)",
-                "Filter".yellow(),
-                public_count,
-                total_count
-            );
-        }
-    }
-
-    // Step 4: Render
-    let rendered = optica::render::render_all(&page_store, config)?;
-    if !quiet {
-        println!("  {} Rendered {} pages", "Render".dimmed(), rendered.len());
-    }
-
-    // Step 5: Output
-    optica::output::write_output(&rendered, &page_store, config, &discovered)?;
-
-    // Step 6: Copy subgraph media files
-    if !subgraph_decls.is_empty() {
-        for decl in &subgraph_decls {
-            copy_subgraph_media(decl, &config.build.output_dir)?;
-        }
-    }
-
-    let elapsed = start.elapsed();
-    if !quiet {
-        println!(
-            "{} Built in {:.2}s → {}",
-            "Done!".green().bold(),
-            elapsed.as_secs_f64(),
-            config.build.output_dir.display()
-        );
-    }
-
-    Ok(())
+    optica::server::reload::build_full(config, quiet, subgraphs_override).map(|_| ())
 }
 
 /// Copy media/binary files from a subgraph repo to output/media/{subgraph}/.
 /// Only copies files with known media extensions.
-fn copy_subgraph_media(
-    decl: &optica::scanner::subgraph::SubgraphDecl,
-    output_dir: &Path,
-) -> Result<()> {
-    use globset::{Glob, GlobSetBuilder};
-    use walkdir::WalkDir;
-
-    let media_output = output_dir.join("media").join(&decl.name);
-
-    // Build exclude set
-    let mut builder = GlobSetBuilder::new();
-    for pattern in &decl.exclude_patterns {
-        if let Ok(glob) = Glob::new(pattern) {
-            builder.add(glob);
-        }
-    }
-    let exclude_set = builder.build()?;
-
-    let media_exts = [
-        "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "avif",
-        "mp4", "webm", "ogg", "mp3", "wav", "flac",
-        "pdf", "zip", "tar", "gz", "woff", "woff2", "ttf", "eot",
-    ];
-
-    for entry in WalkDir::new(&decl.repo_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
-        let path = entry.path();
-        let relative = path
-            .strip_prefix(&decl.repo_path)
-            .unwrap_or(path);
-
-        if exclude_set.is_match(relative) {
-            continue;
-        }
-
-        let ext = path
-            .extension()
-            .map(|e| e.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-
-        if !media_exts.contains(&ext.as_str()) {
-            continue;
-        }
-
-        let dest = media_output.join(relative);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::copy(path, &dest)?;
-    }
-
-    Ok(())
-}
 
 fn check_site(config: &SiteConfig, subgraphs_override: Option<&Path>) -> Result<()> {
     println!("{} {}", "Checking".cyan().bold(), config.site.title);
