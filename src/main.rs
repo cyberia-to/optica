@@ -423,7 +423,9 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
     }
 
     // Step 4: Build graph
+    let t_parsed = start.elapsed();
     let mut page_store = optica::graph::build_graph(parsed_pages)?;
+    let t_graphed = start.elapsed();
     for decl in &subgraph_decls {
         if decl.is_private {
             page_store.subgraph_private.insert(decl.name.clone());
@@ -451,12 +453,24 @@ fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path
 
     // Step 4: Render
     let rendered = optica::render::render_all(&page_store, config)?;
+    let t_rendered = start.elapsed();
     if !quiet {
         println!("  {} Rendered {} pages", "Render".dimmed(), rendered.len());
     }
 
     // Step 5: Output
     optica::output::write_output(&rendered, &page_store, config, &discovered)?;
+    let t_written = start.elapsed();
+    if !quiet {
+        println!(
+            "  {} scan+parse {:.1}s · graph {:.1}s · render {:.1}s · write {:.1}s",
+            "Phases".dimmed(),
+            t_parsed.as_secs_f64(),
+            (t_graphed - t_parsed).as_secs_f64(),
+            (t_rendered - t_graphed).as_secs_f64(),
+            (t_written - t_rendered).as_secs_f64()
+        );
+    }
 
     // Step 6: Copy subgraph media files
     if !subgraph_decls.is_empty() {
