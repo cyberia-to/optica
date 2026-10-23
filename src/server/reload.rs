@@ -73,6 +73,12 @@ struct BuildCache {
     /// marked dirty when a child moves IN or OUT, not only when a current
     /// child re-parses.
     last_namespace_children: HashMap<String, HashSet<PageId>>,
+    /// tag → its public members, sorted, as of the last render: a tag page is
+    /// re-rendered only when this changes or a member page was dirty.
+    last_tag_members: HashMap<String, Vec<PageId>>,
+    /// alias slug → target as of the last render: a redirect is rewritten only
+    /// when its target changes or it is new.
+    last_alias_map: HashMap<String, PageId>,
     /// Whether the initial full build has completed
     initialized: bool,
     /// Cached subgraph parsed pages, keyed by subgraph name. Only the touched
@@ -105,6 +111,8 @@ impl BuildCache {
             backlink_snapshots: HashMap::new(),
             last_content_page_ids: HashSet::new(),
             last_namespace_children: HashMap::new(),
+            last_tag_members: HashMap::new(),
+            last_alias_map: HashMap::new(),
             initialized: false,
             subgraph_pages_by_name: HashMap::new(),
             subgraph_repo_by_name: HashMap::new(),
@@ -277,7 +285,7 @@ fn watch_and_rebuild_loop(
     // warm-up below rebuilds the picture from the files instead.
     let seeded = match seed {
         Some(rx) => match rx.recv() {
-            Ok(seed) => { adopt_seed(&mut cache, seed); true }
+            Ok(seed) => { adopt_seed(&mut cache, seed, config.content.clone()); true }
             Err(_) => false,
         },
         None => false,
@@ -370,6 +378,8 @@ fn watch_and_rebuild_loop(
                 .iter()
                 .map(|(k, v)| (k.clone(), v.iter().cloned().collect()))
                 .collect();
+            let mut scratch: HashSet<PageId> = HashSet::new();
+            mark_tags_and_aliases(&mut cache, &store, &config.content, &mut scratch);
             // Cache the store so fast path can reuse it
             cache.cached_store = Some(store);
         }
@@ -1015,6 +1025,7 @@ fn incremental_rebuild(
             }
         }
         cache.last_namespace_children = new_namespace_children;
+        mark_tags_and_aliases(cache, &store, &config.content, &mut dirty_ids);
 
         for (page_id, page) in &store.pages {
             if !cache.content_hashes.contains_key(page_id) {
@@ -1070,7 +1081,7 @@ fn incremental_rebuild(
     } else {
         None
     };
-    let rendered = crate::render::render_cached(
+    let (rendered, fresh) = crate::render::render_cached(
         store,
         config,
         &mut cache.render_cache,
@@ -1093,9 +1104,9 @@ fn incremental_rebuild(
             // Previously this wrote ALL 12K pages via write_incremental,
             // which took 30-60s. Now we only write the actually-changed pages.
             // Include all synthetic/tag pages that render_cached re-rendered.
-            for rp in &rendered {
-                if rp.page_id.starts_with("__") {
-                    dirty_ids.insert(rp.page_id.clone());
+            for id in &fresh {
+                if id.starts_with("__") {
+                    dirty_ids.insert(id.clone());
                 }
             }
             crate::output::write_dirty_pages(&rendered, &dirty_ids, config)?;
@@ -1132,7 +1143,36 @@ pub struct BuildSeed {
     pub rendered: Vec<RenderedPage>,
 }
 
-fn adopt_seed(cache: &mut BuildCache, seed: BuildSeed) {
+/// Compare the store's tags and aliases with the last render: mark the tag
+/// pages and redirects that must be re-rendered, and remember the new state.
+fn mark_tags_and_aliases(
+    cache: &mut BuildCache,
+    store: &crate::graph::PageStore,
+    content: &crate::config::ContentSection,
+    dirty_ids: &mut HashSet<PageId>,
+) {
+    let public_tags = store.public_tag_index(content);
+    let mut new_members: HashMap<String, Vec<PageId>> = HashMap::new();
+    for (tag, ids) in &public_tags {
+        let mut sorted = ids.clone();
+        sorted.sort();
+        let changed = cache.last_tag_members.get(tag) != Some(&sorted)
+            || sorted.iter().any(|id| dirty_ids.contains(id));
+        if changed {
+            dirty_ids.insert(format!("__tag__{}", slug::slugify(tag)));
+        }
+        new_members.insert(tag.clone(), sorted);
+    }
+    cache.last_tag_members = new_members;
+    for (slug_, target) in &store.alias_map {
+        if cache.last_alias_map.get(slug_) != Some(target) {
+            dirty_ids.insert(format!("__alias__{}", slug_));
+        }
+    }
+    cache.last_alias_map = store.alias_map.clone();
+}
+
+fn adopt_seed(cache: &mut BuildCache, seed: BuildSeed, seed_content: crate::config::ContentSection) {
     for file in seed.discovered.pages.iter().chain(seed.discovered.journals.iter()) {
         cache.file_cache.insert(file.path.clone(), file.clone());
     }
@@ -1162,6 +1202,8 @@ fn adopt_seed(cache: &mut BuildCache, seed: BuildSeed) {
     for rp in seed.rendered {
         cache.render_cache.insert(rp.page_id.clone(), rp);
     }
+    let mut scratch: HashSet<PageId> = HashSet::new();
+    mark_tags_and_aliases(cache, &store, &seed_content, &mut scratch);
     cache.cached_store = Some(store);
     cache.initialized = true;
     eprintln!("  {} adopted the build: {} pages, no warm-up", "Watch".dimmed(), cache.render_cache.len());

@@ -24,7 +24,7 @@ pub struct RenderedPage {
 }
 
 pub fn render_all(store: &PageStore, config: &SiteConfig) -> Result<Vec<RenderedPage>> {
-    render_cached(store, config, &mut HashMap::new(), None)
+    render_cached(store, config, &mut HashMap::new(), None).map(|(pages, _)| pages)
 }
 
 /// Create a template environment for use with `render_single_page`.
@@ -84,13 +84,16 @@ pub fn render_cached(
     config: &SiteConfig,
     cache: &mut HashMap<PageId, RenderedPage>,
     dirty_ids: Option<&HashSet<PageId>>,
-) -> Result<Vec<RenderedPage>> {
+) -> Result<(Vec<RenderedPage>, HashSet<PageId>)> {
     let env = templates::setup_environment(config.build.template_dir.as_deref(), config)?;
 
     // Pre-compute dimensional peer index once — O(n) instead of O(n²)
     let peer_index = context::build_peer_index(store, config);
 
     let mut rendered = Vec::new();
+    // The ids rendered in this call, as opposed to served from the cache:
+    // the caller writes exactly these to disk.
+    let mut fresh: HashSet<PageId> = HashSet::new();
 
     // Reserved URL slugs — synthetic pages take priority over regular pages
     let reserved_slugs: std::collections::HashSet<&str> =
@@ -176,6 +179,7 @@ pub fn render_cached(
         .collect();
     for rp in results {
         let rp = rp?;
+        fresh.insert(rp.page_id.clone());
         cache.insert(rp.page_id.clone(), rp.clone());
         rendered.push(rp);
     }
@@ -197,6 +201,7 @@ pub fn render_cached(
                     html: $html,
                     url_path: $url.to_string(),
                 };
+                fresh.insert(id.clone());
                 cache.insert(id, rp.clone());
                 rendered.push(rp);
             } else if let Some(cached) = cache.get(&id) {
@@ -213,23 +218,42 @@ pub fn render_cached(
         rendered.push(cached.clone());
     }
 
-    // Render tag pages (only for public pages)
+    // Render tag pages (only for public pages). A tag page is rendered when
+    // the caller marked it (`__tag__<slug>` in the dirty set: its members or
+    // their titles changed), when nothing is cached for it, or on a full
+    // render; the big tags list tens of thousands of pages, so this is the
+    // cost of a structural change, and it runs in parallel.
     let public_tags = store.public_tag_index(&config.content);
+    let mut tag_work: Vec<(&String, &Vec<PageId>, String, String)> = Vec::new();
     for (tag, page_ids) in &public_tags {
         let tag_slug = slug::slugify(tag);
         let id = format!("__tag__{}", tag_slug);
-        if any_dirty {
-            let tag_html = render_tag_page(tag, page_ids, store, config, &env)?;
-            let rp = RenderedPage {
-                page_id: id.clone(),
-                html: tag_html,
-                url_path: format!("/tags/{}/index.html", tag_slug),
-            };
-            cache.insert(id, rp.clone());
-            rendered.push(rp);
+        let want = match dirty_ids {
+            None => true,
+            Some(d) => d.contains(&id) || !cache.contains_key(&id),
+        };
+        if want {
+            tag_work.push((tag, page_ids, tag_slug, id));
         } else if let Some(cached) = cache.get(&id) {
             rendered.push(cached.clone());
         }
+    }
+    let tag_results: Vec<Result<RenderedPage>> = tag_work
+        .par_iter()
+        .map(|(tag, page_ids, tag_slug, id)| -> Result<RenderedPage> {
+            let tag_html = render_tag_page(tag, page_ids, store, config, &env)?;
+            Ok(RenderedPage {
+                page_id: id.clone(),
+                html: tag_html,
+                url_path: format!("/tags/{}/index.html", tag_slug),
+            })
+        })
+        .collect();
+    for rp in tag_results {
+        let rp = rp?;
+        fresh.insert(rp.page_id.clone());
+        cache.insert(rp.page_id.clone(), rp.clone());
+        rendered.push(rp);
     }
 
     // Render tags index page
@@ -283,7 +307,13 @@ pub fn render_cached(
             continue;
         }
         let alias_id = format!("__alias__{}", alias_slug);
-        if !any_dirty {
+        // A redirect is rewritten only when the caller marked it (new alias,
+        // new target) or nothing is cached for it.
+        let want = match dirty_ids {
+            None => true,
+            Some(d) => d.contains(&alias_id) || !cache.contains_key(&alias_id),
+        };
+        if !want {
             if let Some(cached) = cache.get(&alias_id) {
                 rendered.push(cached.clone());
                 continue;
@@ -297,11 +327,12 @@ pub fn render_cached(
             html: redirect_html,
             url_path: format!("/{}/index.html", alias_slug),
         };
+        fresh.insert(alias_id.clone());
         cache.insert(alias_id, rp.clone());
         rendered.push(rp);
     }
 
-    Ok(rendered)
+    Ok((rendered, fresh))
 }
 
 fn render_index(
