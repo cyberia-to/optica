@@ -10,7 +10,7 @@ use anyhow::Result;
 use colored::Colorize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, SystemTime};
 
@@ -158,9 +158,10 @@ pub fn start_watch_rebuild(
     config: SiteConfig,
     build_version: Arc<AtomicU64>,
     subgraphs_path: Option<PathBuf>,
+    build_done: Option<Arc<AtomicBool>>,
 ) {
     std::thread::spawn(move || {
-        if let Err(e) = watch_and_rebuild_loop(&config, &build_version, subgraphs_path.as_deref()) {
+        if let Err(e) = watch_and_rebuild_loop(&config, &build_version, subgraphs_path.as_deref(), build_done) {
             eprintln!("  {} File watcher error: {}", "Error".red(), e);
         }
     });
@@ -170,6 +171,7 @@ fn watch_and_rebuild_loop(
     config: &SiteConfig,
     build_version: &Arc<AtomicU64>,
     subgraphs_path: Option<&Path>,
+    build_done: Option<Arc<AtomicBool>>,
 ) -> Result<()> {
     use notify::Watcher;
 
@@ -254,6 +256,19 @@ fn watch_and_rebuild_loop(
             }
             eprintln!("  {} Watching subgraph '{}': {}", "Watch".dimmed(), decl.name, decl.repo_path.display());
             watcher.watch(&decl.repo_path, notify::RecursiveMode::Recursive)?;
+        }
+    }
+
+    // The initial full build runs in its own thread and writes every page at
+    // its end from the files it scanned at its start. An incremental render of
+    // a file edited meanwhile was overwritten by that final write, and the
+    // warm-up below then hashed the new bytes, so the page stayed stale until
+    // its next edit. So: wait for the build, warm up from the files as they
+    // are now, and treat every event buffered meanwhile as a change whose
+    // hashes are unknown.
+    if let Some(done) = build_done.as_ref() {
+        while !done.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(500));
         }
     }
 
@@ -380,8 +395,53 @@ fn watch_and_rebuild_loop(
     let output_canon = config.build.output_dir.canonicalize()
         .unwrap_or_else(|_| config.build.output_dir.clone());
 
+    // Events buffered during the build and the warm-up: those pages were
+    // rendered from older bytes, and the warm-up has already hashed the
+    // current ones. Forget what the cache knows about them so the first pass
+    // sees them as changed.
+    let mut pending: Vec<PathBuf> = Vec::new();
+    while let Ok(more) = rx.try_recv() {
+        pending.extend(more);
+    }
+    if !pending.is_empty() {
+        let late: HashSet<PathBuf> = pending.iter().cloned().collect();
+        let mut forgotten = 0usize;
+        let root_hits: Vec<(PathBuf, PageId)> = cache.parse_cache.iter()
+            .filter(|(path, _)| late.contains(*path))
+            .map(|(path, (_, page))| (path.clone(), page.id.clone()))
+            .collect();
+        for (path, id) in root_hits {
+            cache.parse_cache.remove(&path);
+            cache.content_hashes.remove(&id);
+            cache.meta_hashes.remove(&id);
+            cache.tag_hashes.remove(&id);
+            cache.link_hashes.remove(&id);
+            forgotten += 1;
+        }
+        for sg_cache in cache.subgraph_parse_caches.values_mut() {
+            let hits: Vec<(PathBuf, PageId)> = sg_cache.iter()
+                .filter(|(path, _)| late.contains(*path))
+                .map(|(path, (_, page))| (path.clone(), page.id.clone()))
+                .collect();
+            for (path, id) in hits {
+                sg_cache.remove(&path);
+                cache.content_hashes.remove(&id);
+                cache.meta_hashes.remove(&id);
+                cache.tag_hashes.remove(&id);
+                cache.link_hashes.remove(&id);
+                forgotten += 1;
+            }
+        }
+        eprintln!(
+            "  {} {} file{} changed during the build; {} page{} will be re-rendered from current bytes",
+            "Watch".dimmed(), pending.len(), if pending.len() == 1 { "" } else { "s" },
+            forgotten, if forgotten == 1 { "" } else { "s" }
+        );
+    }
+
     loop {
-        if let Ok(paths) = rx.recv() {
+        let received = if pending.is_empty() { rx.recv() } else { Ok(std::mem::take(&mut pending)) };
+        if let Ok(paths) = received {
             // Debounce: wait 100ms and collect all changed paths
             std::thread::sleep(Duration::from_millis(100));
             let mut changed: HashSet<PathBuf> = paths.into_iter().collect();
