@@ -76,9 +76,12 @@ pub fn render_single_page(
 }
 
 /// Render pages with optional caching. When `dirty_ids` is Some, only pages in
-/// the dirty set are re-rendered; clean pages are served from `cache`.
-/// When `dirty_ids` is None, all pages are rendered (full rebuild).
-/// The cache is updated with newly rendered pages.
+/// the dirty set are re-rendered; clean pages stay in `cache` and are NOT
+/// returned — returning them meant cloning every page's HTML (gigabytes on a
+/// 30k-page graph) on every edit, which under memory pressure stalled a
+/// rebuild for the better part of an hour. When `dirty_ids` is None, all
+/// pages are rendered (full rebuild). The cache is updated with newly
+/// rendered pages; the returned Vec and set hold exactly what was rendered.
 pub fn render_cached(
     store: &PageStore,
     config: &SiteConfig,
@@ -117,8 +120,7 @@ pub fn render_cached(
         // Check cache: skip rendering if page is clean
         if let Some(dirty) = dirty_ids {
             if !dirty.contains(page_id) {
-                if let Some(cached) = cache.get(page_id) {
-                    rendered.push(cached.clone());
+                if cache.contains_key(page_id) {
                     continue;
                 }
             }
@@ -204,8 +206,6 @@ pub fn render_cached(
                 fresh.insert(id.clone());
                 cache.insert(id, rp.clone());
                 rendered.push(rp);
-            } else if let Some(cached) = cache.get(&id) {
-                rendered.push(cached.clone());
             }
         }};
     }
@@ -214,8 +214,6 @@ pub fn render_cached(
     if any_dirty {
         let index_html = render_index(store, config, &env)?;
         push_synthetic!("__index__", index_html, "/index.html");
-    } else if let Some(cached) = cache.get("__index__") {
-        rendered.push(cached.clone());
     }
 
     // Render tag pages (only for public pages). A tag page is rendered when
@@ -234,8 +232,6 @@ pub fn render_cached(
         };
         if want {
             tag_work.push((tag, page_ids, tag_slug, id));
-        } else if let Some(cached) = cache.get(&id) {
-            rendered.push(cached.clone());
         }
     }
     let tag_results: Vec<Result<RenderedPage>> = tag_work
@@ -260,16 +256,12 @@ pub fn render_cached(
     if any_dirty {
         let tags_html = render_tags_index(store, config, &env)?;
         push_synthetic!("__tags_index__", tags_html, "/tags/index.html");
-    } else if let Some(cached) = cache.get("__tags_index__") {
-        rendered.push(cached.clone());
     }
 
     // Render blog page (date-sorted page listing)
     if any_dirty {
         let blog_html = render_blog(store, config, &env)?;
         push_synthetic!("__blog__", blog_html, "/blog/index.html");
-    } else if let Some(cached) = cache.get("__blog__") {
-        rendered.push(cached.clone());
     }
 
     // Render graph visualization page
@@ -277,8 +269,6 @@ pub fn render_cached(
         if any_dirty {
             let graph_html = render_graph_page(store, config, &env)?;
             push_synthetic!("__graph__", graph_html, "/graph/index.html");
-        } else if let Some(cached) = cache.get("__graph__") {
-            rendered.push(cached.clone());
         }
     }
 
@@ -291,8 +281,6 @@ pub fn render_cached(
     if pages_changed {
         let files_html = render_files_page(store, config, &env)?;
         push_synthetic!("__files__", files_html, "/files/index.html");
-    } else if let Some(cached) = cache.get("__files__") {
-        rendered.push(cached.clone());
     }
 
     // Render 404 page — Netlify and GitHub Pages auto-serve /404.html
@@ -301,8 +289,6 @@ pub fn render_cached(
     if any_dirty {
         let not_found_html = render_404(store, config, &env)?;
         push_synthetic!("__404__", not_found_html, "/404.html");
-    } else if let Some(cached) = cache.get("__404__") {
-        rendered.push(cached.clone());
     }
 
     // Generate redirect pages for aliases
@@ -319,10 +305,7 @@ pub fn render_cached(
             Some(d) => d.contains(&alias_id) || !cache.contains_key(&alias_id),
         };
         if !want {
-            if let Some(cached) = cache.get(&alias_id) {
-                rendered.push(cached.clone());
-                continue;
-            }
+            continue;
         }
         let redirect_html = format!(
             r#"<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/{canonical_id}"><link rel="canonical" href="/{canonical_id}"><title>Redirecting…</title></head><body>Redirecting to <a href="/{canonical_id}">/{canonical_id}</a></body></html>"#

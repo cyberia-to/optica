@@ -175,6 +175,36 @@ pub fn write_dirty_pages(
     Ok(())
 }
 
+/// Remove the output of pages that no longer exist. Only the page's own file
+/// goes; its directory is removed when nothing else lives there, so a
+/// namespace page can leave while its children stay.
+pub fn remove_pages(page_ids: &[String], config: &SiteConfig) -> Result<()> {
+    let output_dir = &config.build.output_dir;
+    for id in page_ids {
+        if media::is_media_asset_page_id(id) {
+            continue;
+        }
+        let file_path = if config.urls.style == "pretty" {
+            output_dir.join(id).join("index.html")
+        } else {
+            output_dir.join(format!("{}.html", id))
+        };
+        match fs::remove_file(&file_path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+        }
+        let mut dir = file_path.parent().map(|p| p.to_path_buf());
+        while let Some(d) = dir {
+            if d == *output_dir || fs::remove_dir(&d).is_err() {
+                break;
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
+        }
+    }
+    Ok(())
+}
+
 /// Write output incrementally — overwrites all pages and regenerates indexes.
 /// Used for structural changes (pages added/removed, tags changed).
 pub fn write_incremental(

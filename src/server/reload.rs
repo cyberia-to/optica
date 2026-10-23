@@ -931,7 +931,13 @@ fn incremental_rebuild(
 
     // Check for structural change: pages added or removed, or tags changed, or meta/links changed.
     let pages_added_or_removed = content_page_ids != cache.last_content_page_ids;
-    let pages_removed = cache.last_content_page_ids.iter().any(|id| !content_page_ids.contains(id));
+    let removed_ids: Vec<PageId> = cache
+        .last_content_page_ids
+        .iter()
+        .filter(|id| !content_page_ids.contains(*id))
+        .cloned()
+        .collect();
+    let pages_removed = !removed_ids.is_empty();
     let tags_changed = dirty_ids.iter().any(|dirty_id| {
         all_parsed.iter().find(|p| &p.id == dirty_id).map(|page| {
             let new_tag_hash = hash_str(&page.meta.tags.join(","));
@@ -1100,7 +1106,7 @@ fn incremental_rebuild(
         &mut cache.render_cache,
         dirty_ref,
     )?;
-    let total = rendered.len();
+    let total = cache.render_cache.len();
     let t_rendered = t_start.elapsed();
 
     // Step 6: Output — write only what changed
@@ -1110,20 +1116,19 @@ fn incremental_rebuild(
         cache.initialized = true;
     } else if structural_change {
         if pages_removed {
-            // Pages were removed: full incremental write to clean up stale directories
-            crate::output::write_incremental(&rendered, &store, config, &discovered)?;
-        } else {
-            // Pages added or tags/meta changed (no removals): write dirty + synthetic.
-            // Previously this wrote ALL 12K pages via write_incremental,
-            // which took 30-60s. Now we only write the actually-changed pages.
-            // Include all synthetic/tag pages that render_cached re-rendered.
-            for id in &fresh {
-                if id.starts_with("__") {
-                    dirty_ids.insert(id.clone());
-                }
-            }
-            crate::output::write_dirty_pages(&rendered, &dirty_ids, config)?;
+            // A removed page leaves the output by name. Rewriting every page
+            // to flush stale directories (the old way) moved gigabytes for a
+            // rename and was the slowest path a user could hit.
+            crate::output::remove_pages(&removed_ids, config)?;
         }
+        // Pages added, removed or tags/meta changed: write the dirty pages and
+        // the synthetic/tag pages that render_cached re-rendered.
+        for id in &fresh {
+            if id.starts_with("__") {
+                dirty_ids.insert(id.clone());
+            }
+        }
+        crate::output::write_dirty_pages(&rendered, &dirty_ids, config)?;
     } else {
         // Content-only change: write just the dirty pages
         crate::output::write_dirty_pages(&rendered, &dirty_ids, config)?;
