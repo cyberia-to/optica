@@ -21,6 +21,7 @@ pub fn serve(
     live_reload: bool,
     open_browser: bool,
     subgraphs: Option<&Path>,
+    build_done: Option<Arc<AtomicBool>>,
 ) -> Result<()> {
     let output_dir = config.build.output_dir.clone();
     let addr = format!("{}:{}", bind, port);
@@ -72,6 +73,7 @@ pub fn serve(
             config.clone(),
             build_version.clone(),
             subgraphs.map(|p| p.to_path_buf()),
+            build_done,
         );
     }
 
