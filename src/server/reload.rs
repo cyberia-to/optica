@@ -410,15 +410,16 @@ fn watch_and_rebuild_loop(
     let output_canon = config.build.output_dir.canonicalize()
         .unwrap_or_else(|_| config.build.output_dir.clone());
 
-    // Events buffered during the build and the warm-up: those pages were
-    // rendered from older bytes, and the warm-up has already hashed the
-    // current ones. Forget what the cache knows about them so the first pass
-    // sees them as changed.
+    // Events buffered during the build. With a seed, the cache holds the
+    // hashes of the bytes the build rendered, so the ordinary diff finds
+    // exactly what changed since. After a warm-up the cache has hashed the
+    // current bytes instead, so those pages are forgotten first and the
+    // first pass sees them as changed.
     let mut pending: Vec<PathBuf> = Vec::new();
     while let Ok(more) = rx.try_recv() {
         pending.extend(more);
     }
-    if !pending.is_empty() {
+    if !pending.is_empty() && !seeded {
         let late: HashSet<PathBuf> = pending.iter().cloned().collect();
         let mut forgotten = 0usize;
         let root_hits: Vec<(PathBuf, PageId)> = cache.parse_cache.iter()
@@ -451,6 +452,11 @@ fn watch_and_rebuild_loop(
             "  {} {} file{} changed during the build; {} page{} will be re-rendered from current bytes",
             "Watch".dimmed(), pending.len(), if pending.len() == 1 { "" } else { "s" },
             forgotten, if forgotten == 1 { "" } else { "s" }
+        );
+    } else if !pending.is_empty() {
+        eprintln!(
+            "  {} {} file{} changed during the build; diffed against what the build rendered",
+            "Watch".dimmed(), pending.len(), if pending.len() == 1 { "" } else { "s" }
         );
     }
 
