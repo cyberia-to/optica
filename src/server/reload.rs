@@ -379,7 +379,7 @@ fn watch_and_rebuild_loop(
                 .map(|(k, v)| (k.clone(), v.iter().cloned().collect()))
                 .collect();
             let mut scratch: HashSet<PageId> = HashSet::new();
-            mark_tags_and_aliases(&mut cache, &store, &config.content, &mut scratch);
+            mark_tags_and_aliases(&mut cache, &store, &config.content, &HashSet::new(), &mut scratch);
             // Cache the store so fast path can reuse it
             cache.cached_store = Some(store);
         }
@@ -873,6 +873,7 @@ fn incremental_rebuild(
     let t_ingested = t_start.elapsed();
     // Step 3: Detect content, meta, and link changes BEFORE building graph (cheap hash comparison).
     let mut dirty_ids: HashSet<PageId> = HashSet::new();
+    let mut meta_dirty_ids: HashSet<PageId> = HashSet::new();
     let mut content_page_ids: HashSet<PageId> = HashSet::new();
     let mut meta_changed = false;
     let mut links_changed = false;
@@ -901,6 +902,7 @@ fn incremental_rebuild(
         if let Some(&old_meta_hash) = cache.meta_hashes.get(&page.id) {
             if old_meta_hash != new_meta_hash && was_reparsed {
                 dirty_ids.insert(page.id.clone());
+                meta_dirty_ids.insert(page.id.clone());
                 meta_changed = true;
             }
         } else if cache.initialized && was_reparsed {
@@ -1025,7 +1027,7 @@ fn incremental_rebuild(
             }
         }
         cache.last_namespace_children = new_namespace_children;
-        mark_tags_and_aliases(cache, &store, &config.content, &mut dirty_ids);
+        mark_tags_and_aliases(cache, &store, &config.content, &meta_dirty_ids, &mut dirty_ids);
 
         for (page_id, page) in &store.pages {
             if !cache.content_hashes.contains_key(page_id) {
@@ -1067,7 +1069,9 @@ fn incremental_rebuild(
             || k.starts_with("__"));  // Keep synthetic page caches
     }
 
-    if structural_change {
+    // The synthetic pages — index, tags index, blog, files, graph, 404 — list
+    // pages by title and tag; a change of links alone leaves them as they are.
+    if !cache.initialized || pages_added_or_removed || tags_changed || meta_changed {
         dirty_ids.insert("__structural__".to_string());
     }
 
@@ -1116,8 +1120,9 @@ fn incremental_rebuild(
         crate::output::write_dirty_pages(&rendered, &dirty_ids, config)?;
     }
     let t_written = t_start.elapsed();
+    let written_bytes: usize = rendered.iter().filter(|rp| dirty_ids.contains(&rp.page_id)).map(|rp| rp.html.len()).sum();
     eprintln!(
-        "  {} scan+parse {:.1}s · ingest {:.1}s · hash {:.1}s · graph {:.1}s · render {:.1}s · write {:.1}s{}",
+        "  {} scan+parse {:.1}s · ingest {:.1}s · hash {:.1}s · graph {:.1}s · render {:.1}s · write {:.1}s ({} pages, {:.1} MB){}",
         "Phases".dimmed(),
         t_parsed.as_secs_f64(),
         (t_ingested - t_parsed).as_secs_f64(),
@@ -1125,6 +1130,8 @@ fn incremental_rebuild(
         (t_graphed - t_hashed).as_secs_f64(),
         (t_rendered - t_graphed).as_secs_f64(),
         (t_written - t_rendered).as_secs_f64(),
+        dirty_ids.len(),
+        written_bytes as f64 / 1_048_576.0,
         if structural_change { " · structural" } else { "" }
     );
 
@@ -1149,6 +1156,7 @@ fn mark_tags_and_aliases(
     cache: &mut BuildCache,
     store: &crate::graph::PageStore,
     content: &crate::config::ContentSection,
+    meta_dirty_ids: &HashSet<PageId>,
     dirty_ids: &mut HashSet<PageId>,
 ) {
     let public_tags = store.public_tag_index(content);
@@ -1156,8 +1164,10 @@ fn mark_tags_and_aliases(
     for (tag, ids) in &public_tags {
         let mut sorted = ids.clone();
         sorted.sort();
+        // the tag page lists its members by title: it changes when the set
+        // changes or a member's frontmatter did, not when a member's body did
         let changed = cache.last_tag_members.get(tag) != Some(&sorted)
-            || sorted.iter().any(|id| dirty_ids.contains(id));
+            || sorted.iter().any(|id| meta_dirty_ids.contains(id));
         if changed {
             dirty_ids.insert(format!("__tag__{}", slug::slugify(tag)));
         }
@@ -1203,7 +1213,7 @@ fn adopt_seed(cache: &mut BuildCache, seed: BuildSeed, seed_content: crate::conf
         cache.render_cache.insert(rp.page_id.clone(), rp);
     }
     let mut scratch: HashSet<PageId> = HashSet::new();
-    mark_tags_and_aliases(cache, &store, &seed_content, &mut scratch);
+    mark_tags_and_aliases(cache, &store, &seed_content, &HashSet::new(), &mut scratch);
     cache.cached_store = Some(store);
     cache.initialized = true;
     eprintln!("  {} adopted the build: {} pages, no warm-up", "Watch".dimmed(), cache.render_cache.len());
