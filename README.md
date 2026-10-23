@@ -57,7 +57,7 @@ a subgraph may declare its own children in a `subgraphs.toml` at its root, in th
 name = "cyberia-my"
 
 [[subgraph]]
-name = "cybland"
+name = "midao"
 visibility = "private"
 ```
 
