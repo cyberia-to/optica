@@ -471,7 +471,7 @@ fn watch_and_rebuild_loop(
             let start = std::time::Instant::now();
 
             // Try fast path first (skips filesystem scan for content-only edits)
-            if let Some(result) = try_fast_path(config, &mut cache, &changed) {
+            if let Some(result) = try_fast_path(config, &mut cache, &changed, subgraphs_path) {
                 match result {
                     Ok((rendered_count, dirty_count)) => {
                         let elapsed = start.elapsed();
@@ -527,31 +527,50 @@ fn try_fast_path(
     config: &SiteConfig,
     cache: &mut BuildCache,
     changed_paths: &HashSet<PathBuf>,
+    subgraphs_path: Option<&Path>,
 ) -> Option<Result<(usize, usize)>> {
     // Preconditions: cache must be initialized with a cached store
     if !cache.initialized || cache.cached_store.is_none() {
         return None;
     }
 
-    // All changed paths must be known .md files already in our caches (not new, not deleted)
+    // Every changed path must be a page we already know, in the root graph or
+    // in a subgraph; a new or deleted file needs the full scan.
+    let mut subgraph_of: HashMap<PathBuf, String> = HashMap::new();
     for path in changed_paths {
         if !path.exists() {
             return None; // File was deleted — need full scan
         }
-        if !cache.file_cache.contains_key(path) {
-            return None; // Unknown file (new file?) — need full scan
-        }
-        if !cache.parse_cache.contains_key(path) {
-            return None; // Not previously parsed — need full scan
+        let sg = cache.subgraph_repo_by_name.iter()
+            .find(|(_, repo)| path.starts_with(repo))
+            .map(|(name, _)| name.clone());
+        match sg {
+            Some(name) => {
+                let known = cache.subgraph_parse_caches.get(&name)
+                    .map(|c| c.contains_key(path)).unwrap_or(false);
+                if !known {
+                    return None; // a new file of the subgraph — need the full ingest
+                }
+                subgraph_of.insert(path.clone(), name);
+            }
+            None => {
+                if !cache.file_cache.contains_key(path) {
+                    return None; // Unknown file (new file?) — need full scan
+                }
+                if !cache.parse_cache.contains_key(path) {
+                    return None; // Not previously parsed — need full scan
+                }
+            }
         }
     }
-
-    // No subgraph files
-    if changed_paths.iter().any(|p| {
-        cache.subgraph_repo_by_name.values().any(|repo| p.starts_with(repo))
-    }) {
-        return None;
-    }
+    let decls: HashMap<String, crate::scanner::subgraph::SubgraphDecl> = if subgraph_of.is_empty() {
+        HashMap::new()
+    } else {
+        match crate::scanner::subgraph::load_subgraph_decls(subgraphs_path) {
+            Ok(d) => d.into_iter().map(|d| (d.name.clone(), d)).collect(),
+            Err(_) => return None,
+        }
+    };
 
     // Re-parse changed files into a temporary buffer BEFORE touching caches.
     // If we detect structural changes (meta/links), we bail to incremental_rebuild —
@@ -563,6 +582,7 @@ fn try_fast_path(
         mtime: SystemTime,
         page: ParsedPage,
         page_id: PageId,
+        subgraph: Option<String>,
         new_content: u64,
         new_meta: u64,
         new_links: u64,
@@ -575,10 +595,19 @@ fn try_fast_path(
     let mut links_changed = false;
 
     for path in changed_paths {
-        let file = cache.file_cache.get(path).unwrap().clone();
-        let page = match crate::parser::parse_file(&file) {
-            Ok(p) => p,
-            Err(e) => return Some(Err(e)),
+        let page = if let Some(name) = subgraph_of.get(path) {
+            let Some(decl) = decls.get(name) else { return None };
+            match crate::scanner::subgraph::parse_subgraph_file(decl, path) {
+                Ok(Some(p)) => p,
+                Ok(None) => return None, // the declaring README, or not a page: full ingest
+                Err(e) => return Some(Err(e)),
+            }
+        } else {
+            let file = cache.file_cache.get(path).unwrap().clone();
+            match crate::parser::parse_file(&file) {
+                Ok(p) => p,
+                Err(e) => return Some(Err(e)),
+            }
         };
         let mtime = std::fs::metadata(path)
             .ok()
@@ -608,6 +637,7 @@ fn try_fast_path(
             mtime,
             page,
             page_id,
+            subgraph: subgraph_of.get(path).cloned(),
             new_content,
             new_meta,
             new_links,
@@ -627,7 +657,21 @@ fn try_fast_path(
         cache.meta_hashes.insert(update.page_id.clone(), update.new_meta);
         cache.link_hashes.insert(update.page_id.clone(), update.new_links);
         cache.tag_hashes.insert(update.page_id.clone(), update.new_tags);
-        cache.parse_cache.insert(update.path.clone(), (update.mtime, update.page.clone()));
+        match &update.subgraph {
+            Some(name) => {
+                if let Some(sg_cache) = cache.subgraph_parse_caches.get_mut(name) {
+                    sg_cache.insert(update.path.clone(), (update.mtime, update.page.clone()));
+                }
+                if let Some(pages) = cache.subgraph_pages_by_name.get_mut(name) {
+                    if let Some(p) = pages.iter_mut().find(|p| p.id == update.page_id) {
+                        *p = update.page.clone();
+                    }
+                }
+            }
+            None => {
+                cache.parse_cache.insert(update.path.clone(), (update.mtime, update.page.clone()));
+            }
+        }
     }
 
     if dirty_ids.is_empty() {
@@ -637,16 +681,14 @@ fn try_fast_path(
     // Content-only change: update cached store in-place and re-render dirty pages
     {
         let store = cache.cached_store.as_mut().unwrap();
-        for dirty_id in &dirty_ids {
-            // Find the freshly-parsed page in parse_cache
-            if let Some((_, new_page)) = cache.parse_cache.values()
-                .find(|(_, p)| p.id == **dirty_id)
-            {
-                if let Some(cached_page) = store.pages.get_mut(dirty_id) {
-                    cached_page.content_md = new_page.content_md.clone();
-                    cached_page.meta = new_page.meta.clone();
-                    cached_page.outgoing_links = new_page.outgoing_links.clone();
-                }
+        for update in &pending {
+            if !dirty_ids.contains(&update.page_id) {
+                continue;
+            }
+            if let Some(cached_page) = store.pages.get_mut(&update.page_id) {
+                cached_page.content_md = update.page.content_md.clone();
+                cached_page.meta = update.page.meta.clone();
+                cached_page.outgoing_links = update.page.outgoing_links.clone();
             }
         }
     }
@@ -692,6 +734,7 @@ fn incremental_rebuild(
     changed_paths: &HashSet<PathBuf>,
     subgraphs_path: Option<&Path>,
 ) -> Result<(usize, usize)> {
+    let t_start = std::time::Instant::now();
     // Step 1: Scan (always full — it's fast)
     let discovered = crate::scanner::scan(&config.build.input_dir, &config.content)?;
 
@@ -742,6 +785,7 @@ fn incremental_rebuild(
     cache.parse_cache.retain(|path, _| current_paths.contains(path));
     cache.file_cache.retain(|path, _| current_paths.contains(path));
 
+    let t_parsed = t_start.elapsed();
     // Step 2b: Load subgraph decls (TOML), enforce monopoly, then re-ingest
     // ONLY the subgraphs whose files actually changed. Each subgraph repo can
     // contain thousands of files (cyb: 4417, pussy-ts: 1209); re-ingesting all
@@ -811,6 +855,7 @@ fn incremental_rebuild(
     // regressed images on re-rendered pages).
     crate::parser::apply_ipfs_rewrites_for_config(&mut all_parsed, config)?;
 
+    let t_ingested = t_start.elapsed();
     // Step 3: Detect content, meta, and link changes BEFORE building graph (cheap hash comparison).
     let mut dirty_ids: HashSet<PageId> = HashSet::new();
     let mut content_page_ids: HashSet<PageId> = HashSet::new();
@@ -883,6 +928,7 @@ fn incremental_rebuild(
         || links_changed;
 
 
+    let t_hashed = t_start.elapsed();
     // Step 4: Build or reuse graph store.
     // Full graph build (PageRank, gravity, etc.) is expensive — only do it for structural changes.
     if structural_change || cache.cached_store.is_none() {
@@ -1009,6 +1055,7 @@ fn incremental_rebuild(
         dirty_ids.insert("__structural__".to_string());
     }
 
+    let t_graphed = t_start.elapsed();
     let dirty_count = dirty_ids.len();
     let store = cache.cached_store.as_ref().unwrap();
 
@@ -1025,6 +1072,7 @@ fn incremental_rebuild(
         dirty_ref,
     )?;
     let total = rendered.len();
+    let t_rendered = t_start.elapsed();
 
     // Step 6: Output — write only what changed
     if !cache.initialized {
@@ -1051,6 +1099,18 @@ fn incremental_rebuild(
         // Content-only change: write just the dirty pages
         crate::output::write_dirty_pages(&rendered, &dirty_ids, config)?;
     }
+    let t_written = t_start.elapsed();
+    eprintln!(
+        "  {} scan+parse {:.1}s · ingest {:.1}s · hash {:.1}s · graph {:.1}s · render {:.1}s · write {:.1}s{}",
+        "Phases".dimmed(),
+        t_parsed.as_secs_f64(),
+        (t_ingested - t_parsed).as_secs_f64(),
+        (t_hashed - t_ingested).as_secs_f64(),
+        (t_graphed - t_hashed).as_secs_f64(),
+        (t_rendered - t_graphed).as_secs_f64(),
+        (t_written - t_rendered).as_secs_f64(),
+        if structural_change { " · structural" } else { "" }
+    );
 
     Ok((total, dirty_count))
 }

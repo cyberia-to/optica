@@ -53,28 +53,20 @@ pub fn write_output(
     config: &SiteConfig,
     discovered: &DiscoveredFiles,
 ) -> Result<()> {
-    let output_dir = &config.build.output_dir;
-
-    // Clean output directory (retry on macOS "Directory not empty" race)
-    if output_dir.exists() {
-        let mut last_err = None;
-        for _ in 0..3 {
-            match fs::remove_dir_all(output_dir) {
-                Ok(()) => {
-                    last_err = None;
-                    break;
-                }
-                Err(e) => {
-                    last_err = Some(e);
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-            }
-        }
-        if let Some(e) = last_err {
-            return Err(e.into());
-        }
+    // Build into a sibling directory and swap it in at the end: a site that
+    // is being served (`optica serve` builds in the background) never shows
+    // a half-written tree or a 404 while the old one is being deleted.
+    let final_dir = config.build.output_dir.clone();
+    let dir_name = final_dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "build".into());
+    let staging_dir = final_dir.with_file_name(format!("{}.next", dir_name));
+    if staging_dir.exists() {
+        fs::remove_dir_all(&staging_dir)?;
     }
-    fs::create_dir_all(output_dir)?;
+    fs::create_dir_all(&staging_dir)?;
+    let mut staged = config.clone();
+    staged.build.output_dir = staging_dir.clone();
+    let config = &staged;
+    let output_dir = &config.build.output_dir;
 
     // Write rendered HTML pages. Skip media-asset page ids so we never create
     // `media/foo.svg/index.html` directories that block raw media serving.
@@ -142,6 +134,18 @@ pub fn write_output(
     let file_entries = files::build_file_index(store, config);
     files::write_files_index(&file_entries, output_dir)?;
 
+    // Swap: the old tree steps aside, the new one takes its place, the old one goes.
+    let old_dir = final_dir.with_file_name(format!("{}.old", dir_name));
+    if old_dir.exists() {
+        fs::remove_dir_all(&old_dir)?;
+    }
+    if final_dir.exists() {
+        fs::rename(&final_dir, &old_dir)?;
+    }
+    fs::rename(&staging_dir, &final_dir)?;
+    if old_dir.exists() {
+        let _ = fs::remove_dir_all(&old_dir);
+    }
     Ok(())
 }
 

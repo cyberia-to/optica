@@ -365,6 +365,24 @@ fn resolve_subgraph_graph_dir(repo_path: &Path) -> PathBuf {
 
 /// Scan an external repository and return discovered files under the subgraph namespace.
 /// All files are collected; markdown files become Pages, everything else becomes Files.
+/// Parse one page file of a subgraph the way `ingest_subgraph_cached` would,
+/// for the live-reload fast path. `None` when the path is not a page of this
+/// subgraph or is its declaring README, whose content is merged with the
+/// root page and needs the full ingest.
+pub fn parse_subgraph_file(decl: &SubgraphDecl, path: &std::path::Path) -> Result<Option<ParsedPage>> {
+    let files = scan_subgraph(decl)?;
+    let Some(file) = files.iter().find(|f| f.path == path && f.kind == FileKind::Page) else {
+        return Ok(None);
+    };
+    let page = crate::parser::parse_file(file)?;
+    let decl_slug = crate::parser::slugify_page_name(&decl.declaring_page_id);
+    let readme_takes_over = decl.mount == decl_slug || decl.mount.is_empty();
+    if readme_takes_over && (page.id == decl.declaring_page_id || page.id == decl_slug) {
+        return Ok(None);
+    }
+    Ok(Some(page))
+}
+
 pub fn scan_subgraph(decl: &SubgraphDecl) -> Result<Vec<DiscoveredFile>> {
     if !decl.repo_path.exists() {
         eprintln!(
