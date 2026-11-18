@@ -13,7 +13,7 @@ use anyhow::Result;
 use chrono::NaiveDate;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Unique identifier for a page (normalized/slugified from page name)
 pub type PageId = String;
@@ -334,6 +334,33 @@ pub fn parse_file(file: &DiscoveredFile) -> Result<ParsedPage> {
     })
 }
 
+/// The first `limit` bytes of a file as text, for the preview of a file too
+/// large to inline. `take(..).read_to_end` so a short read is read to the end
+/// of the window instead of being taken for the whole preview, and a
+/// multi-byte character the window cut in half is dropped: a readable text
+/// file must not be published as "Large binary file" because of where the
+/// 64 KB landed. `None` when the bytes are invalid before that last
+/// character — then the file really is binary.
+fn read_preview(path: &Path, limit: usize) -> Option<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).ok()?;
+    let mut buf: Vec<u8> = Vec::new();
+    file.take(limit as u64).read_to_end(&mut buf).ok()?;
+    match String::from_utf8(buf) {
+        Ok(text) => Some(text),
+        Err(e) => {
+            let valid_up_to = e.utf8_error().valid_up_to();
+            let bytes = e.into_bytes();
+            // A character is at most 4 bytes: anything longer than a cut tail
+            // is not a boundary artifact.
+            if bytes.len() - valid_up_to > 3 {
+                return None;
+            }
+            String::from_utf8(bytes[..valid_up_to].to_vec()).ok()
+        }
+    }
+}
+
 /// Parse a non-markdown file into a graph node.
 /// Text files get wrapped in code fences; binary files get a metadata description.
 fn parse_non_md_file(file: &DiscoveredFile) -> Result<ParsedPage> {
@@ -362,6 +389,43 @@ fn parse_non_md_file(file: &DiscoveredFile) -> Result<ParsedPage> {
         }
     }
 
+    // A file beyond this size is shown as a preview, not inlined: a 500 MB
+    // data file rendered as a code block became a 500 MB page, and the
+    // build spent its minutes on pages nobody opens.
+    const INLINE_LIMIT: u64 = 1 << 20;
+    const PREVIEW_BYTES: usize = 64 << 10;
+    let file_len = std::fs::metadata(&file.path).map(|m| m.len()).unwrap_or(0);
+    if file_len > INLINE_LIMIT {
+        let preview = read_preview(&file.path, PREVIEW_BYTES);
+        let lang = extension_to_lang(&ext);
+        let content_md = match preview {
+            Some(text) => format!(
+                "Large file: `{}` — {} — the first {} KB:\n\n```{}\n{}\n```\n",
+                file.name, format_size(file_len), PREVIEW_BYTES >> 10, lang, text
+            ),
+            None => format!("Large binary file: `{}`\n\nSize: {}\nType: {}", file.name, format_size(file_len), if ext.is_empty() { "unknown" } else { &ext }),
+        };
+        return Ok(ParsedPage {
+            id,
+            meta: PageMeta {
+                title: file.name.clone(),
+                properties: HashMap::new(),
+                tags,
+                public: Some(true),
+                aliases: Vec::new(),
+                date: None,
+                icon: None,
+                menu_order: None,
+                stake: None,
+            },
+            kind: PageKind::File,
+            source_path: file.path.clone(),
+            namespace,
+            subgraph: file.subgraph.clone(),
+            content_md,
+            outgoing_links: Vec::new(),
+        });
+    }
     // Try to read as text
     let (content_md, outgoing_links) = match std::fs::read_to_string(&file.path) {
         Ok(text) => {

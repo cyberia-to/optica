@@ -13,17 +13,29 @@ pub fn generate_sitemap(
     config: &SiteConfig,
     output_dir: &Path,
 ) -> Result<()> {
+    let url_paths: Vec<String> = rendered.iter().map(|p| p.url_path.clone()).collect();
+    generate_sitemap_paths(&url_paths, config, output_dir)
+}
+
+/// The sitemap from url paths alone — what the live-reload path has: it
+/// renders only the dirty pages, and the whole site's paths come from its
+/// render cache.
+pub fn generate_sitemap_paths(
+    url_paths: &[String],
+    config: &SiteConfig,
+    output_dir: &Path,
+) -> Result<()> {
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 "#,
     );
 
-    for page in rendered {
-        let url_path = if page.url_path.ends_with("/index.html") {
-            page.url_path.trim_end_matches("index.html").to_string()
+    for page_url in url_paths {
+        let url_path = if page_url.ends_with("/index.html") {
+            page_url.trim_end_matches("index.html").to_string()
         } else {
-            page.url_path.clone()
+            page_url.clone()
         };
 
         xml.push_str(&format!(
