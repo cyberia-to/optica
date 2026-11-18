@@ -16,7 +16,7 @@ use crate::render::RenderedPage;
 use crate::scanner::DiscoveredFiles;
 use anyhow::Result;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Default CSS and JS baked into the binary
 const DEFAULT_CSS: &str = include_str!("../../static/style.css");
@@ -57,11 +57,8 @@ pub fn write_output(
     // is being served (`optica serve` builds in the background) never shows
     // a half-written tree or a 404 while the old one is being deleted.
     let final_dir = config.build.output_dir.clone();
-    let dir_name = final_dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "build".into());
-    let staging_dir = final_dir.with_file_name(format!("{}.next", dir_name));
-    if staging_dir.exists() {
-        fs::remove_dir_all(&staging_dir)?;
-    }
+    let (staging_dir, old_dir) = swap_dirs(&final_dir);
+    remove_dir_all_retry(&staging_dir)?;
     fs::create_dir_all(&staging_dir)?;
     let mut staged = config.clone();
     staged.build.output_dir = staging_dir.clone();
@@ -135,16 +132,51 @@ pub fn write_output(
     files::write_files_index(&file_entries, output_dir)?;
 
     // Swap: the old tree steps aside, the new one takes its place, the old one goes.
-    let old_dir = final_dir.with_file_name(format!("{}.old", dir_name));
-    if old_dir.exists() {
-        fs::remove_dir_all(&old_dir)?;
-    }
+    remove_dir_all_retry(&old_dir)?;
     if final_dir.exists() {
         fs::rename(&final_dir, &old_dir)?;
     }
     fs::rename(&staging_dir, &final_dir)?;
-    if old_dir.exists() {
-        let _ = fs::remove_dir_all(&old_dir);
+    // The tree is already swapped in: deleting what it replaced is cleanup,
+    // and a build must not fail on it. A tree that survives is skipped by
+    // the scanner and the watcher, and the next build removes it.
+    let _ = remove_dir_all_retry(&old_dir);
+    Ok(())
+}
+
+/// The two trees `write_output` needs to swap a build in: the staging tree it
+/// writes into and the place the tree being replaced waits to be deleted.
+/// Both are siblings of the output dir, so with the default config (input
+/// dir ".", output dir "build") they live inside the scanned and watched
+/// input tree: the scanner skip list (`scanner::mod.rs`) and the watcher
+/// filter (`server::reload`) must both exclude them, or a build's own output
+/// is read back as content and every write of it looks like an edit.
+pub fn swap_dirs(output_dir: &Path) -> (PathBuf, PathBuf) {
+    let name = output_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "build".into());
+    (
+        output_dir.with_file_name(format!("{}.next", name)),
+        output_dir.with_file_name(format!("{}.old", name)),
+    )
+}
+
+/// Delete a tree, retrying a few times: on macOS `remove_dir_all` returns
+/// "Directory not empty" when entries go away under it (a server reading the
+/// tree, Spotlight indexing it), and the retry succeeds. An absent tree is
+/// already deleted. Leaving one behind would otherwise park tens of
+/// thousands of generated HTML files inside the input tree.
+fn remove_dir_all_retry(dir: &Path) -> Result<()> {
+    for attempt in 0..5 {
+        match fs::remove_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) if attempt == 4 => {
+                return Err(anyhow::anyhow!("remove_dir_all({}): {}", dir.display(), e))
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
     }
     Ok(())
 }
@@ -202,6 +234,38 @@ pub fn remove_pages(page_ids: &[String], config: &SiteConfig) -> Result<()> {
             dir = d.parent().map(|p| p.to_path_buf());
         }
     }
+    Ok(())
+}
+
+/// Regenerate the indexes that belong to the store as a whole — feed,
+/// sitemap, search, graph, topics and the files index. A structural change
+/// (a page added, removed or renamed) invalidates every one of them: without
+/// this the search index still offers a page that is gone and the result
+/// 404s, and the graph JSON still draws it. They are a handful of files, not
+/// the gigabytes of rewriting every page.
+///
+/// `url_paths` is the url path of every page the site has, not only the ones
+/// just rendered: the sitemap lists the whole site, and an incremental
+/// render returns only what it rendered.
+pub fn write_store_indexes(
+    url_paths: &[String],
+    store: &PageStore,
+    config: &SiteConfig,
+) -> Result<()> {
+    let output_dir = &config.build.output_dir;
+    if config.feeds.enabled {
+        feed::generate_feed(store, config, output_dir)?;
+    }
+    sitemap::generate_sitemap_paths(url_paths, config, output_dir)?;
+    if config.search.enabled {
+        search::generate_search_index(store, config, output_dir)?;
+    }
+    if config.graph.enabled {
+        graph::generate_graph_data(store, config, output_dir)?;
+    }
+    graph::generate_topics_data(store, config, output_dir)?;
+    let file_entries = files::build_file_index(store, config);
+    files::write_files_index(&file_entries, output_dir)?;
     Ok(())
 }
 

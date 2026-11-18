@@ -21,7 +21,7 @@ pub fn serve(
     live_reload: bool,
     open_browser: bool,
     subgraphs: Option<&Path>,
-    seed: Option<std::sync::mpsc::Receiver<reload::BuildSeed>>,
+    seed: Option<std::sync::mpsc::Receiver<crate::build::BuildSeed>>,
 ) -> Result<()> {
     let output_dir = config.build.output_dir.clone();
     let addr = format!("{}:{}", bind, port);

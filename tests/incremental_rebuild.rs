@@ -442,3 +442,156 @@ fn test_rebuild_after_adding_new_page() {
     assert!(output_exists(&config, "first"), "first page should still exist");
     assert!(output_exists(&config, "second"), "second page should appear after rebuild");
 }
+
+#[test]
+fn test_write_output_leaves_no_staging_trees() {
+    let (tmp, config) = setup_test_env();
+
+    write_page(tmp.path(), "alpha", "---\ntags: test\n---\n\nAlpha");
+    full_build(&config);
+
+    // write_output builds into build.next and parks the tree it replaces at
+    // build.old. Both are siblings of the output dir — inside the scanned
+    // input tree — so neither may survive the build.
+    let staging = tmp.path().join("build.next");
+    let parked = tmp.path().join("build.old");
+    assert!(
+        !staging.exists(),
+        "build.next must not survive the build: the next scan would read it as content"
+    );
+    assert!(
+        !parked.exists(),
+        "build.old must not survive the build: the next scan would read it as content"
+    );
+    assert!(
+        output_exists(&config, "alpha"),
+        "the swapped-in tree holds the page"
+    );
+
+    // A second build over the first swaps again and still leaves nothing.
+    write_page(tmp.path(), "beta", "---\ntags: test\n---\n\nBeta");
+    full_build(&config);
+    assert!(!staging.exists(), "build.next must not survive the second build");
+    assert!(!parked.exists(), "build.old must not survive the second build");
+    assert!(output_exists(&config, "alpha"), "alpha survives the swap");
+    assert!(output_exists(&config, "beta"), "beta appears after the swap");
+}
+
+#[test]
+fn test_scan_skips_the_output_staging_trees() {
+    let tmp = TempDir::new().expect("failed to create temp dir");
+    let config = SiteConfig::default();
+
+    // Flat layout (no graph/ dir): the scanner walks the repo itself, which
+    // is where a build that failed or was interrupted left build.next.
+    fs::write(
+        tmp.path().join("real.md"),
+        "---\ntags: test\n---\n\nA real page",
+    )
+    .expect("failed to write page");
+    for leftover in &["build", "build.next", "build.old"] {
+        let page_dir = tmp.path().join(leftover).join("stale");
+        fs::create_dir_all(&page_dir).expect("failed to create leftover dir");
+        fs::write(page_dir.join("index.html"), "<html>generated</html>")
+            .expect("failed to write leftover html");
+        fs::write(tmp.path().join(leftover).join("stale.md"), "stale markdown")
+            .expect("failed to write leftover markdown");
+    }
+
+    let discovered = scanner::scan(tmp.path(), &config.content).expect("scan failed");
+
+    let scanned: Vec<String> = discovered
+        .pages
+        .iter()
+        .chain(discovered.journals.iter())
+        .chain(discovered.media.iter())
+        .chain(discovered.files.iter())
+        .map(|f| f.path.to_string_lossy().to_string())
+        .collect();
+    for path in &scanned {
+        assert!(
+            !path.contains("build.next") && !path.contains("build.old"),
+            "the scanner must not ingest the trees write_output swaps through, got {}",
+            path
+        );
+    }
+    assert!(
+        scanned.iter().any(|p| p.ends_with("real.md")),
+        "the real page is still scanned, got {:?}",
+        scanned
+    );
+}
+
+#[test]
+fn test_remove_pages_removes_the_page_and_keeps_its_sibling() {
+    let (tmp, config) = setup_test_env();
+
+    write_page(tmp.path(), "project/alpha", "---\ntags: test\n---\n\nAlpha");
+    write_page(tmp.path(), "project/beta", "---\ntags: test\n---\n\nBeta");
+    full_build(&config);
+
+    let alpha_slug = parser::slugify_page_name("project/alpha");
+    let beta_slug = parser::slugify_page_name("project/beta");
+    assert!(output_exists(&config, &alpha_slug), "alpha should be built");
+    assert!(output_exists(&config, &beta_slug), "beta should be built");
+
+    output::remove_pages(&[alpha_slug.clone()], &config).expect("remove_pages failed");
+
+    assert!(
+        !output_exists(&config, &alpha_slug),
+        "the removed page's output should be gone"
+    );
+    assert!(
+        output_exists(&config, &beta_slug),
+        "a sibling under the same namespace dir should stay"
+    );
+}
+
+#[test]
+fn test_render_cached_returns_only_what_it_rendered() {
+    let (tmp, config) = setup_test_env();
+
+    write_page(tmp.path(), "alpha", "---\ntags: test\n---\n\nAlpha");
+    write_page(tmp.path(), "beta", "---\ntags: test\n---\n\nBeta");
+
+    let discovered = scanner::scan(&config.build.input_dir, &config.content).expect("scan failed");
+    let parsed_pages = parser::parse_all(&discovered).expect("parse failed");
+    let page_store = graph::build_graph(parsed_pages).expect("build_graph failed");
+
+    let mut cache = std::collections::HashMap::new();
+    let (first, first_fresh) = render::render_cached(&page_store, &config, &mut cache, None)
+        .expect("full render failed");
+    assert!(
+        first.len() >= 2,
+        "a full render returns every page, got {}",
+        first.len()
+    );
+    assert!(
+        first_fresh.contains("alpha") && first_fresh.contains("beta"),
+        "a full render renders every page afresh"
+    );
+
+    // Only alpha is dirty: the call must return alpha alone — the caller
+    // writes exactly what came back, and returning beta from the cache
+    // rewrote the whole site for one edit.
+    let mut dirty = std::collections::HashSet::new();
+    dirty.insert("alpha".to_string());
+    let (second, second_fresh) =
+        render::render_cached(&page_store, &config, &mut cache, Some(&dirty))
+            .expect("dirty render failed");
+
+    let ids: Vec<String> = second.iter().map(|p| p.page_id.clone()).collect();
+    assert_eq!(
+        ids,
+        vec!["alpha".to_string()],
+        "a dirty render returns only what it rendered, got {:?}",
+        ids
+    );
+    assert_eq!(
+        second_fresh.len(),
+        1,
+        "only the dirty page was rendered afresh, got {:?}",
+        second_fresh
+    );
+    drop(tmp);
+}

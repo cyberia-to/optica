@@ -3,6 +3,7 @@
 // crystal-type: source
 // crystal-domain: comp
 // ---
+use crate::build::BuildSeed;
 use crate::config::SiteConfig;
 use crate::parser::{ParsedPage, PageId};
 use crate::render::RenderedPage;
@@ -67,6 +68,11 @@ struct BuildCache {
     backlink_snapshots: HashMap<PageId, Vec<PageId>>,
     /// Content page IDs from the last build (excludes stubs) — detect structural changes
     last_content_page_ids: HashSet<PageId>,
+    /// Every page the last build put in the output, stubs included. A page
+    /// that left the store since — a deleted file, a stub that lost its last
+    /// incoming link — has a file to remove, and the content set alone does
+    /// not name the stubs.
+    last_store_page_ids: HashSet<PageId>,
     /// Namespace tree children-sets from last build. Mapping namespace_key →
     /// set of page ids that were children of that namespace last time.
     /// Detect namespace parent changes by set-difference, so a parent is
@@ -110,6 +116,7 @@ impl BuildCache {
             link_hashes: HashMap::new(),
             backlink_snapshots: HashMap::new(),
             last_content_page_ids: HashSet::new(),
+            last_store_page_ids: HashSet::new(),
             last_namespace_children: HashMap::new(),
             last_tag_members: HashMap::new(),
             last_alias_map: HashMap::new(),
@@ -366,6 +373,7 @@ fn watch_and_rebuild_loop(
             // Build graph to get full store (with stubs, links, PageRank, etc.)
             let mut store = crate::graph::build_graph(warmup_pages)?;
             store.subgraph_private = cache.private_subgraph_names.clone();
+            cache.last_store_page_ids = store.pages.keys().cloned().collect();
             // Snapshot backlinks
             for (page_id, backlinks) in &store.backlinks {
                 let mut sorted = backlinks.clone();
@@ -409,6 +417,34 @@ fn watch_and_rebuild_loop(
         .unwrap_or_else(|_| config.build.input_dir.clone());
     let output_canon = config.build.output_dir.canonicalize()
         .unwrap_or_else(|_| config.build.output_dir.clone());
+    // The build stages into `<out>.next` and parks the tree it replaces at
+    // `<out>.old` (`output::swap_dirs`). Both are siblings of the output dir,
+    // so on a flat-layout root they are inside the watched tree and neither
+    // matches the "/build/" fragment: without them here every one of the
+    // tens of thousands of staged writes looks like a content change, the
+    // build's own output is what the first pass diffs, and a serve that just
+    // seeded its watcher pays a full rebuild anyway. The sibling paths are
+    // canonical because `output_canon` is.
+    let (staging_canon, old_canon) = crate::output::swap_dirs(&output_canon);
+    let staging_frag = format!("{}/", staging_canon.display());
+    let old_frag = format!("{}/", old_canon.display());
+    // One judgement of a changed path, used both for the events buffered
+    // during the build and for every event after it.
+    let is_content_path = |p: &PathBuf| -> bool {
+        let path_str = p.to_string_lossy();
+        let canon = p.canonicalize().unwrap_or_else(|_| p.clone());
+        !path_str.contains("/.git/")
+            && !path_str.contains("/.worktrees/")
+            && !path_str.contains("/target/")
+            && !path_str.contains("/node_modules/")
+            && !path_str.contains("/build/")
+            && !path_str.starts_with(&staging_frag)
+            && !path_str.starts_with(&old_frag)
+            && !canon.starts_with(&output_canon)
+            && !canon.starts_with(&staging_canon)
+            && !canon.starts_with(&old_canon)
+            && canon != input_canon
+    };
 
     // Events buffered during the build. With a seed, the cache holds the
     // hashes of the bytes the build rendered, so the ordinary diff finds
@@ -419,6 +455,7 @@ fn watch_and_rebuild_loop(
     while let Ok(more) = rx.try_recv() {
         pending.extend(more);
     }
+    pending.retain(&is_content_path);
     if !pending.is_empty() && !seeded {
         let late: HashSet<PathBuf> = pending.iter().cloned().collect();
         let mut forgotten = 0usize;
@@ -470,19 +507,11 @@ fn watch_and_rebuild_loop(
                 changed.extend(more);
             }
 
-            // Filter to content files, excluding .git/.worktrees/target/node_modules/build.
-            // Accept any file (not just .md) — the scanner handles file type classification.
-            changed.retain(|p| {
-                let path_str = p.to_string_lossy();
-                let canon = p.canonicalize().unwrap_or_else(|_| p.clone());
-                !path_str.contains("/.git/")
-                    && !path_str.contains("/.worktrees/")
-                    && !path_str.contains("/target/")
-                    && !path_str.contains("/node_modules/")
-                    && !path_str.contains("/build/")
-                    && !canon.starts_with(&output_canon)
-                    && canon != input_canon
-            });
+            // Filter to content files, excluding .git/.worktrees/target/
+            // node_modules and the output tree with the two trees the build
+            // swaps it through. Accept any file (not just .md) — the scanner
+            // handles file type classification.
+            changed.retain(&is_content_path);
 
             if changed.is_empty() {
                 continue;
@@ -593,6 +622,23 @@ fn try_fast_path(
         }
     };
 
+    // One walk per touched subgraph, not one per changed path: finding a
+    // file's `DiscoveredFile` means walking the whole repo, and editing three
+    // files of cyb would otherwise cost three walks of 4400 files.
+    let mut subgraph_files: HashMap<String, Vec<crate::scanner::DiscoveredFile>> = HashMap::new();
+    for name in subgraph_of.values() {
+        if subgraph_files.contains_key(name) {
+            continue;
+        }
+        let Some(decl) = decls.get(name) else { return None };
+        match crate::scanner::subgraph::scan_subgraph(decl) {
+            Ok(files) => {
+                subgraph_files.insert(name.clone(), files);
+            }
+            Err(e) => return Some(Err(e)),
+        }
+    }
+
     // Re-parse changed files into a temporary buffer BEFORE touching caches.
     // If we detect structural changes (meta/links), we bail to incremental_rebuild —
     // and the caches must still hold OLD hashes so incremental_rebuild correctly
@@ -618,7 +664,8 @@ fn try_fast_path(
     for path in changed_paths {
         let page = if let Some(name) = subgraph_of.get(path) {
             let Some(decl) = decls.get(name) else { return None };
-            match crate::scanner::subgraph::parse_subgraph_file(decl, path) {
+            let Some(files) = subgraph_files.get(name) else { return None };
+            match crate::scanner::subgraph::parse_subgraph_file(decl, path, files) {
                 Ok(Some(p)) => p,
                 Ok(None) => return None, // the declaring README, or not a page: full ingest
                 Err(e) => return Some(Err(e)),
@@ -931,13 +978,16 @@ fn incremental_rebuild(
 
     // Check for structural change: pages added or removed, or tags changed, or meta/links changed.
     let pages_added_or_removed = content_page_ids != cache.last_content_page_ids;
-    let removed_ids: Vec<PageId> = cache
+    // The content pages whose source file is gone. What of this actually
+    // leaves the output is decided after the graph build — a page that kept
+    // an incoming link lives on as a stub — and the stubs that left are
+    // added there.
+    let mut removed_output_ids: Vec<PageId> = cache
         .last_content_page_ids
         .iter()
         .filter(|id| !content_page_ids.contains(*id))
         .cloned()
         .collect();
-    let pages_removed = !removed_ids.is_empty();
     let tags_changed = dirty_ids.iter().any(|dirty_id| {
         all_parsed.iter().find(|p| &p.id == dirty_id).map(|page| {
             let new_tag_hash = hash_str(&page.meta.tags.join(","));
@@ -974,6 +1024,18 @@ fn incremental_rebuild(
         };
         store.subgraph_private = cache.private_subgraph_names.clone();
         cache.last_content_page_ids = content_page_ids.clone();
+
+        // Everything that left the store leaves the output: the pages whose
+        // file is gone and the stubs that lost their last incoming link. A
+        // page that lost its file but kept a backlink stays — it is a stub
+        // now, still in the store and still rendered.
+        removed_output_ids.retain(|id| !store.pages.contains_key(id));
+        for id in &cache.last_store_page_ids {
+            if !store.pages.contains_key(id) && !removed_output_ids.contains(id) {
+                removed_output_ids.push(id.clone());
+            }
+        }
+        cache.last_store_page_ids = store.pages.keys().cloned().collect();
 
         // Fix 4: Compare backlink snapshots — mark pages with changed backlinks dirty
         for (page_id, backlinks) in &store.backlinks {
@@ -1115,11 +1177,11 @@ fn incremental_rebuild(
         crate::output::write_output(&rendered, &store, config, &discovered)?;
         cache.initialized = true;
     } else if structural_change {
-        if pages_removed {
+        if !removed_output_ids.is_empty() {
             // A removed page leaves the output by name. Rewriting every page
             // to flush stale directories (the old way) moved gigabytes for a
             // rename and was the slowest path a user could hit.
-            crate::output::remove_pages(&removed_ids, config)?;
+            crate::output::remove_pages(&removed_output_ids, config)?;
         }
         // Pages added, removed or tags/meta changed: write the dirty pages and
         // the synthetic/tag pages that render_cached re-rendered.
@@ -1129,6 +1191,18 @@ fn incremental_rebuild(
             }
         }
         crate::output::write_dirty_pages(&rendered, &dirty_ids, config)?;
+        // The search index, the sitemap, the graph and topics data and the
+        // files index belong to the store, not to a page: a structural change
+        // invalidates all of them, and only writing the dirty pages left the
+        // search offering a page that is gone and the graph drawing it. The
+        // whole site's url paths come from the render cache — `rendered` holds
+        // only what this round rendered.
+        let url_paths: Vec<String> = cache
+            .render_cache
+            .values()
+            .map(|rp| rp.url_path.clone())
+            .collect();
+        crate::output::write_store_indexes(&url_paths, store, config)?;
     } else {
         // Content-only change: write just the dirty pages
         crate::output::write_dirty_pages(&rendered, &dirty_ids, config)?;
@@ -1150,18 +1224,6 @@ fn incremental_rebuild(
     );
 
     Ok((total, dirty_count))
-}
-
-/// Everything the initial build produced that the watcher would otherwise
-/// recompute in its warm-up: the parses, the store, the rendered pages.
-pub struct BuildSeed {
-    pub discovered: crate::scanner::DiscoveredFiles,
-    pub root_parse: HashMap<PathBuf, (SystemTime, ParsedPage)>,
-    pub subgraph_parse_caches: HashMap<String, crate::scanner::subgraph::SubgraphParseCache>,
-    pub subgraph_pages_by_name: HashMap<String, Vec<ParsedPage>>,
-    pub subgraph_repo_by_name: HashMap<String, PathBuf>,
-    pub store: crate::graph::PageStore,
-    pub rendered: Vec<RenderedPage>,
 }
 
 /// Compare the store's tags and aliases with the last render: mark the tag
@@ -1206,13 +1268,26 @@ fn adopt_seed(cache: &mut BuildCache, seed: BuildSeed, seed_content: crate::conf
     cache.subgraph_repo_by_name = seed.subgraph_repo_by_name;
     let mut store = seed.store;
     store.subgraph_private = cache.private_subgraph_names.clone();
+    // The seed's store is post-graph: besides the parsed pages it carries the
+    // stubs `build_graph` invents for referenced-but-missing pages.
+    // `incremental_rebuild` counts content pages pre-graph, from the parses,
+    // so a stub left in this set reads as a page that was removed on the
+    // first structural rebuild — and its output, which nothing re-renders,
+    // would be deleted from the live tree. The warm-up path snapshots
+    // pre-graph for the same reason.
     for (page_id, page) in &store.pages {
+        if store.stub_pages.contains(page_id) {
+            continue;
+        }
         cache.last_content_page_ids.insert(page_id.clone());
         cache.content_hashes.insert(page_id.clone(), hash_str(&page.content_md));
         cache.tag_hashes.insert(page_id.clone(), hash_str(&page.meta.tags.join(",")));
         cache.meta_hashes.insert(page_id.clone(), hash_meta(page));
         cache.link_hashes.insert(page_id.clone(), hash_links(page));
     }
+    // What the output holds, stubs included: a stub that loses its last
+    // incoming link has a file to remove.
+    cache.last_store_page_ids = store.pages.keys().cloned().collect();
     for (page_id, backlinks) in &store.backlinks {
         let mut sorted = backlinks.clone();
         sorted.sort();
@@ -1231,120 +1306,6 @@ fn adopt_seed(cache: &mut BuildCache, seed: BuildSeed, seed_content: crate::conf
     cache.cached_store = Some(store);
     cache.initialized = true;
     eprintln!("  {} adopted the build: {} pages, no warm-up", "Watch".dimmed(), cache.render_cache.len());
-}
-
-/// The full build: scan, parse, ingest the subgraphs, graph, render, write,
-/// media — and return what the watcher needs to continue from here.
-pub fn build_full(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path>) -> Result<BuildSeed> {
-    let start = std::time::Instant::now();
-    if !quiet {
-        println!("{} {}", "Building".cyan().bold(), config.site.title);
-    }
-    let discovered = crate::scanner::scan(&config.build.input_dir, &config.content)?;
-    if !quiet {
-        println!(
-            "  {} Discovered {} pages, {} journals, {} media, {} files",
-            "Scan".dimmed(), discovered.pages.len(), discovered.journals.len(),
-            discovered.media.len(), discovered.files.len()
-        );
-    }
-    // Root pages one file at a time, so the watcher inherits the per-file parse.
-    let mut root_parse: HashMap<PathBuf, (SystemTime, ParsedPage)> = HashMap::new();
-    let mut parsed_pages: Vec<ParsedPage> = Vec::new();
-    for file in discovered.pages.iter().chain(discovered.journals.iter()) {
-        let mtime = std::fs::metadata(&file.path).ok().and_then(|m| m.modified().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
-        let page = crate::parser::parse_file(file)?;
-        root_parse.insert(file.path.clone(), (mtime, page.clone()));
-        parsed_pages.push(page);
-    }
-    parsed_pages.extend(crate::parser::parse_all(&crate::scanner::DiscoveredFiles {
-        pages: vec![], journals: vec![], media: discovered.media.clone(), files: discovered.files.clone(),
-    })?);
-    if !quiet {
-        println!("  {} Parsed {} pages", "Parse".dimmed(), parsed_pages.len());
-    }
-    let subgraph_decls = crate::scanner::subgraph::load_subgraph_decls(subgraphs_override)?;
-    let mut subgraph_parse_caches: HashMap<String, crate::scanner::subgraph::SubgraphParseCache> = HashMap::new();
-    let mut subgraph_pages_by_name: HashMap<String, Vec<ParsedPage>> = HashMap::new();
-    let mut subgraph_repo_by_name: HashMap<String, PathBuf> = HashMap::new();
-    if !subgraph_decls.is_empty() {
-        if !quiet {
-            if let Some(path) = subgraphs_override {
-                println!("  {} Loaded subgraphs from {}", "Config".dimmed(), path.display());
-            }
-        }
-        let mounts: Vec<String> = subgraph_decls.iter().map(|d| d.mount.clone()).filter(|m| !m.is_empty()).collect();
-        let evicted = crate::scanner::subgraph::enforce_namespace_monopoly(&mut parsed_pages, &mounts);
-        if !quiet {
-            for (id, reason) in &evicted {
-                println!("  {} Evicted '{}': {}", "Monopoly".yellow(), id, reason);
-            }
-        }
-        for decl in &subgraph_decls {
-            subgraph_repo_by_name.insert(decl.name.clone(), decl.repo_path.clone());
-            let sg_cache = subgraph_parse_caches.entry(decl.name.clone()).or_default();
-            let ingestion = crate::scanner::subgraph::ingest_subgraph_cached(decl, &mut parsed_pages, sg_cache)?;
-            if !quiet {
-                println!(
-                    "  {} Subgraph '{}': {} pages, {} files",
-                    "Scan".dimmed(), ingestion.stats.name, ingestion.stats.page_count, ingestion.stats.file_count
-                );
-            }
-            subgraph_pages_by_name.insert(decl.name.clone(), ingestion.pages.clone());
-            parsed_pages.extend(ingestion.pages);
-        }
-    }
-    let subgraph_names: Vec<String> = subgraph_decls.iter().map(|d| d.name.clone()).collect();
-    crate::parser::synthesize_dir_indexes(&mut parsed_pages, &subgraph_names);
-    let (count, map_path) = crate::parser::apply_ipfs_rewrites_for_config(&mut parsed_pages, config)?;
-    if !quiet {
-        if let Some(p) = map_path {
-            println!("  {} Rewrote {} media ref{} via {}", "IPFS".dimmed(), count, if count == 1 { "" } else { "s" }, p.display());
-        }
-    }
-    let t_parsed = start.elapsed();
-    let mut store = crate::graph::build_graph(parsed_pages)?;
-    let t_graphed = start.elapsed();
-    for decl in &subgraph_decls {
-        if decl.is_private {
-            store.subgraph_private.insert(decl.name.clone());
-        }
-    }
-    if !quiet {
-        let total_links: usize = store.forward_links.values().map(|v| v.len()).sum();
-        let public_count = store.public_pages(&config.content).len();
-        let total_count = store.pages.len();
-        println!("  {} Built graph with {} links", "Graph".dimmed(), total_links);
-        if config.content.public_only && public_count < total_count {
-            println!(
-                "  {} {}/{} pages are public (set default_public = true or add public:: true to pages)",
-                "Filter".yellow(), public_count, total_count
-            );
-        }
-    }
-    let rendered = crate::render::render_all(&store, config)?;
-    let t_rendered = start.elapsed();
-    if !quiet {
-        println!("  {} Rendered {} pages", "Render".dimmed(), rendered.len());
-    }
-    crate::output::write_output(&rendered, &store, config, &discovered)?;
-    let t_written = start.elapsed();
-    for decl in &subgraph_decls {
-        crate::output::media::copy_subgraph_media(decl, &config.build.output_dir)?;
-    }
-    if !quiet {
-        println!(
-            "  {} scan+parse {:.1}s · graph {:.1}s · render {:.1}s · write {:.1}s",
-            "Phases".dimmed(),
-            t_parsed.as_secs_f64(), (t_graphed - t_parsed).as_secs_f64(),
-            (t_rendered - t_graphed).as_secs_f64(), (t_written - t_rendered).as_secs_f64()
-        );
-        println!(
-            "{} Built in {:.2}s → {}",
-            "Done!".green().bold(), start.elapsed().as_secs_f64(), config.build.output_dir.display()
-        );
-    }
-    Ok(BuildSeed { discovered, root_parse, subgraph_parse_caches, subgraph_pages_by_name, subgraph_repo_by_name, store, rendered })
 }
 
 #[cfg(test)]

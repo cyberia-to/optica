@@ -369,8 +369,15 @@ fn resolve_subgraph_graph_dir(repo_path: &Path) -> PathBuf {
 /// for the live-reload fast path. `None` when the path is not a page of this
 /// subgraph or is its declaring README, whose content is merged with the
 /// root page and needs the full ingest.
-pub fn parse_subgraph_file(decl: &SubgraphDecl, path: &std::path::Path) -> Result<Option<ParsedPage>> {
-    let files = scan_subgraph(decl)?;
+///
+/// `files` is the subgraph's discovered files — `scan_subgraph(decl)`, a full
+/// walk of the repo (cyb is about 4400 files). The caller passes it in so
+/// editing several files of one subgraph costs one walk, not one per file.
+pub fn parse_subgraph_file(
+    decl: &SubgraphDecl,
+    path: &std::path::Path,
+    files: &[DiscoveredFile],
+) -> Result<Option<ParsedPage>> {
     let Some(file) = files.iter().find(|f| f.path == path && f.kind == FileKind::Page) else {
         return Ok(None);
     };

@@ -267,7 +267,7 @@ fn main() -> Result<()> {
                 let quiet = cli.quiet;
                 let subs = subgraphs.clone();
                 std::thread::spawn(move || {
-                    match optica::server::reload::build_full(&cfg, quiet, subs.as_deref()) {
+                    match optica::build::build_full(&cfg, quiet, subs.as_deref()) {
                         Ok(seed) => { let _ = seed_tx.send(seed); }
                         Err(e) => eprintln!("initial build failed: {e:#}"),
                     }
@@ -336,11 +336,8 @@ fn main() -> Result<()> {
 }
 
 fn build_site(config: &SiteConfig, quiet: bool, subgraphs_override: Option<&Path>) -> Result<()> {
-    optica::server::reload::build_full(config, quiet, subgraphs_override).map(|_| ())
+    optica::build::build_full(config, quiet, subgraphs_override).map(|_| ())
 }
-
-/// Copy media/binary files from a subgraph repo to output/media/{subgraph}/.
-/// Only copies files with known media extensions.
 
 fn check_site(config: &SiteConfig, subgraphs_override: Option<&Path>) -> Result<()> {
     println!("{} {}", "Checking".cyan().bold(), config.site.title);
