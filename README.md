@@ -47,7 +47,7 @@ your-project/
 
 ## subgraphs
 
-`--subgraphs <file>` names the repositories to fold into the graph, one `[[subgraphs]]` table each: `name`, `path` (absolute), optional `mount` (URL prefix; default the name), `visibility`, `exclude`, `menu`, `menu_order`. A top-level `public_only = true` makes it a public build.
+`--subgraphs <file>` names the repositories to fold into the graph, one `[[subgraphs]]` table each: `name`, `path` (absolute), optional `mount` (URL prefix; default the name), `visibility`, `exclude`, `menu`, `menu_order`. A top-level `public_only = true` makes it a public build: a private entry is left out, root or nested. (this flag is the census's own, read only here; the `[content] public_only` of `publish.toml` below is a different one, about a page's own frontmatter.)
 
 a subgraph may declare its own children in a `subgraphs.toml` at its root, in the census format (`[[subgraph]]` tables: `name`, optional `parent`, `path`, `mount`, `visibility`, `archived`, `orphan`, `local-only`, `exclude`, `menu`). the root file then names only the top of each tree, and the tree is read from the repositories themselves:
 
@@ -66,9 +66,9 @@ visibility = "private"
 | mount | `<parent mount>/<name>` unless `mount` is set |
 | checkout | `<parent's directory>/../<name>`, the sibling layout; `path` overrides, relative to the parent's checkout |
 | parent | the declaring subgraph; `parent = "x"` hangs the entry under an already loaded `x` instead |
-| privacy | a private parent makes its children private; `public_only` drops private and local-only children |
+| privacy | a private parent makes its children private; `public_only` drops private entries, root or nested, and local-only children |
 | menu | off unless `menu = true` |
-| skipped | archived, orphan, the file's own repo, a missing checkout, a name or checkout already loaded, depth beyond 8 — each with a line on stderr |
+| skipped | archived, orphan, a missing checkout, a name or checkout already loaded, depth beyond 8 — each with a line on stderr (archived, orphan and a missing checkout said once per process); the census line for the file's own repo, silently |
 | broken file | a warning, not a failed build |
 
 `optica serve` watches every loaded checkout and reloads the tree when any `subgraphs.toml` changes; a child added to a tree is ingested on the next change, and watched from the next start.

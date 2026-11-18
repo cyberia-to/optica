@@ -27,7 +27,7 @@ use crate::parser::PageId;
 use crate::scanner::subgraph::{SubgraphDecl, DEFAULT_EXCLUDES};
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Name of the file a subgraph keeps its children in.
@@ -38,9 +38,9 @@ pub const MAX_DEPTH: usize = 8;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct SubgraphsFile {
-    /// Set by the materializer for a public deploy: nested declarations that
-    /// are private or local-only are left out, as the root ones were by the
-    /// materializer itself.
+    /// Set by the materializer for a public deploy: a private entry is left
+    /// out wherever it is declared — the root entries of this file, and the
+    /// nested ones, which go for local-only too.
     #[serde(default)]
     pub public_only: bool,
     #[serde(default)]
@@ -139,10 +139,18 @@ pub fn load(config_path: &Path) -> Result<Vec<SubgraphDecl>> {
     let public_only = parsed.public_only;
 
     let mut decls: Vec<SubgraphDecl> = Vec::new();
-    let mut names: HashSet<String> = HashSet::new();
+    // Depth of every loaded subgraph by name; also the set of loaded names.
+    // Depth is carried on the walk: a mount may be set explicitly and then
+    // says nothing about where in the tree its subgraph sits. Roots are 0.
+    let mut depth_by_name: HashMap<String, usize> = HashMap::new();
     let mut visited: HashSet<PathBuf> = HashSet::new();
 
     for entry in parsed.subgraphs {
+        // The flag means the same thing in both loops: a public build carries
+        // no private subgraph, root or nested.
+        if public_only && is_private(entry.visibility.as_deref()) {
+            continue;
+        }
         let repo_path = entry
             .path
             .canonicalize()
@@ -164,7 +172,7 @@ pub fn load(config_path: &Path) -> Result<Vec<SubgraphDecl>> {
             menu: entry.menu,
             menu_order: entry.menu_order,
         };
-        names.insert(entry.name);
+        depth_by_name.insert(entry.name, 0);
         visited.insert(repo_path);
         decls.push(decl);
     }
@@ -175,9 +183,9 @@ pub fn load(config_path: &Path) -> Result<Vec<SubgraphDecl>> {
     let mut i = 0;
     while i < decls.len() {
         let parent = decls[i].clone();
-        let depth = depth_of(&decls, &parent);
+        let depth = depth_by_name.get(&parent.name).copied().unwrap_or(0);
         if depth < MAX_DEPTH {
-            load_nested(&parent, depth, public_only, &mut decls, &mut names, &mut visited)?;
+            load_nested(&parent, public_only, &mut decls, &mut depth_by_name, &mut visited)?;
         } else {
             eprintln!(
                 "  Warning: subgraph '{}' sits at depth {}; its {} is not read",
@@ -189,19 +197,11 @@ pub fn load(config_path: &Path) -> Result<Vec<SubgraphDecl>> {
     Ok(decls)
 }
 
-/// Depth of a decl: how many `/` its mount carries beyond its root ancestor's.
-/// A root entry declared with an explicit nested mount counts as nested too,
-/// which only makes the depth guard stricter.
-fn depth_of(_decls: &[SubgraphDecl], decl: &SubgraphDecl) -> usize {
-    decl.mount.matches('/').count()
-}
-
 fn load_nested(
     parent: &SubgraphDecl,
-    depth: usize,
     public_only: bool,
     decls: &mut Vec<SubgraphDecl>,
-    names: &mut HashSet<String>,
+    depth_by_name: &mut HashMap<String, usize>,
     visited: &mut HashSet<PathBuf>,
 ) -> Result<()> {
     let file = parent.repo_path.join(NESTED_FILE);
@@ -223,12 +223,24 @@ fn load_nested(
 
     for entry in parsed.subgraph {
         if entry.archived || entry.orphan {
+            // Otherwise the repo leaves the graph silently: a 404 with
+            // nothing in the log to say why. Said once, as the state holds.
+            warn_once(
+                format!("skipped:{}", entry.name),
+                format!(
+                    "  Warning: subgraph '{}' (declared in {} of '{}') is {}; skipped",
+                    entry.name,
+                    NESTED_FILE,
+                    parent.name,
+                    if entry.archived { "archived" } else { "an orphan" }
+                ),
+            );
             continue;
         }
         if entry.name == parent.name {
             continue; // a census line for the file's own repo, as the root file keeps one
         }
-        if names.contains(&entry.name) {
+        if depth_by_name.contains_key(&entry.name) {
             eprintln!(
                 "  Warning: subgraph '{}' declared again in {} of '{}'; the first declaration stands",
                 entry.name, NESTED_FILE, parent.name
@@ -250,6 +262,14 @@ fn load_nested(
             },
             _ => parent.clone(),
         };
+        let depth = depth_by_name.get(&under.name).copied().unwrap_or(0) + 1;
+        if depth > MAX_DEPTH {
+            eprintln!(
+                "  Warning: subgraph '{}' would sit deeper than {}; skipped",
+                entry.name, MAX_DEPTH
+            );
+            continue;
+        }
         let private = under.is_private || is_private(entry.visibility.as_deref());
         if public_only && (private || entry.local_only) {
             continue;
@@ -285,13 +305,6 @@ fn load_nested(
             None if under.mount.is_empty() => entry.name.clone(),
             None => format!("{}/{}", under.mount, entry.name),
         };
-        if depth + 1 > MAX_DEPTH {
-            eprintln!(
-                "  Warning: subgraph '{}' would sit deeper than {}; skipped",
-                entry.name, MAX_DEPTH
-            );
-            continue;
-        }
         let decl = SubgraphDecl {
             name: entry.name.clone(),
             mount,
@@ -302,7 +315,7 @@ fn load_nested(
             menu: entry.menu.unwrap_or(false),
             menu_order: None,
         };
-        names.insert(entry.name);
+        depth_by_name.insert(entry.name, depth);
         visited.insert(repo_path);
         decls.push(decl);
     }
@@ -325,203 +338,4 @@ pub fn load_private_names(config_path: &Path) -> HashSet<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use tempfile::TempDir;
-
-    /// A workspace: `root_dir/<name>` checkouts, a materialized config that
-    /// lists the top-level ones, and nested files where the test puts them.
-    struct Workspace {
-        dir: TempDir,
-    }
-
-    impl Workspace {
-        fn new() -> Self {
-            Workspace { dir: TempDir::new().unwrap() }
-        }
-        fn root(&self) -> PathBuf {
-            self.dir.path().canonicalize().unwrap()
-        }
-        fn repo(&self, name: &str) -> PathBuf {
-            let p = self.root().join(name);
-            fs::create_dir_all(&p).unwrap();
-            fs::write(p.join("README.md"), format!("# {name}\n")).unwrap();
-            p
-        }
-        fn nested(&self, repo: &str, toml: &str) {
-            fs::write(self.root().join(repo).join(NESTED_FILE), toml).unwrap();
-        }
-        fn materialized(&self, public_only: bool, tops: &[(&str, &str)]) -> PathBuf {
-            let mut s = String::new();
-            if public_only {
-                s.push_str("public_only = true\n");
-            }
-            for (name, vis) in tops {
-                s.push_str(&format!(
-                    "[[subgraphs]]\nname = \"{name}\"\npath = {:?}\nvisibility = \"{vis}\"\nmenu = true\n",
-                    self.root().join(name)
-                ));
-            }
-            let p = self.root().join("materialized.toml");
-            fs::write(&p, s).unwrap();
-            p
-        }
-    }
-
-    fn names(decls: &[SubgraphDecl]) -> Vec<String> {
-        decls.iter().map(|d| d.name.clone()).collect()
-    }
-
-    #[test]
-    fn nested_children_mount_under_their_parent_as_sibling_checkouts() {
-        let ws = Workspace::new();
-        ws.repo("cyberia");
-        ws.repo("cyberia-my");
-        ws.repo("cve");
-        ws.nested(
-            "cyberia",
-            "[[subgraph]]\nname = \"cyberia-my\"\nvisibility = \"public\"\n\n[[subgraph]]\nname = \"cve\"\n",
-        );
-        let cfg = ws.materialized(false, &[("cyberia", "public")]);
-        let decls = load(&cfg).unwrap();
-        assert_eq!(names(&decls), vec!["cyberia", "cyberia-my", "cve"]);
-        let my = &decls[1];
-        assert_eq!(my.mount, "cyberia/cyberia-my");
-        assert_eq!(my.repo_path, ws.root().join("cyberia-my"));
-        assert!(!my.is_private);
-        assert!(!my.menu, "nested subgraphs stay out of the menu by default");
-        assert_eq!(my.menu_order, None);
-        assert_eq!(decls[2].mount, "cyberia/cve");
-    }
-
-    #[test]
-    fn a_tree_goes_as_deep_as_its_files_and_accepts_both_table_names() {
-        let ws = Workspace::new();
-        ws.repo("a");
-        ws.repo("b");
-        ws.repo("c");
-        ws.nested("a", "[[subgraph]]\nname = \"b\"\n");
-        ws.nested("b", "[[subgraphs]]\nname = \"c\"\n");
-        let cfg = ws.materialized(false, &[("a", "public")]);
-        let decls = load(&cfg).unwrap();
-        assert_eq!(names(&decls), vec!["a", "b", "c"]);
-        assert_eq!(decls[2].mount, "a/b/c");
-    }
-
-    #[test]
-    fn an_explicit_parent_in_the_same_file_nests_deeper() {
-        let ws = Workspace::new();
-        ws.repo("a");
-        ws.repo("b");
-        ws.repo("c");
-        ws.nested(
-            "a",
-            "[[subgraph]]\nname = \"b\"\n\n[[subgraph]]\nname = \"c\"\nparent = \"b\"\n",
-        );
-        let cfg = ws.materialized(false, &[("a", "public")]);
-        let decls = load(&cfg).unwrap();
-        assert_eq!(decls[2].mount, "a/b/c");
-    }
-
-    #[test]
-    fn explicit_mount_and_path_win() {
-        let ws = Workspace::new();
-        ws.repo("a");
-        let inner = ws.root().join("a").join("docs").join("inner");
-        fs::create_dir_all(&inner).unwrap();
-        ws.repo("elsewhere");
-        ws.nested(
-            "a",
-            "[[subgraph]]\nname = \"inner\"\npath = \"docs/inner\"\nmount = \"a/deep/inner\"\n\n[[subgraph]]\nname = \"far\"\npath = \"../elsewhere\"\n",
-        );
-        let cfg = ws.materialized(false, &[("a", "public")]);
-        let decls = load(&cfg).unwrap();
-        assert_eq!(decls[1].mount, "a/deep/inner");
-        assert_eq!(decls[1].repo_path, inner.canonicalize().unwrap());
-        assert_eq!(decls[2].name, "far");
-        assert_eq!(decls[2].repo_path, ws.root().join("elsewhere"));
-        assert_eq!(decls[2].mount, "a/far");
-    }
-
-    #[test]
-    fn privacy_is_inherited_and_public_only_drops_private_and_local_only() {
-        let ws = Workspace::new();
-        ws.repo("pub");
-        ws.repo("secret");
-        ws.repo("local");
-        ws.repo("open");
-        ws.repo("priv");
-        ws.repo("child-of-priv");
-        ws.nested(
-            "pub",
-            "[[subgraph]]\nname = \"secret\"\nvisibility = \"private\"\n\n[[subgraph]]\nname = \"local\"\nlocal-only = true\n\n[[subgraph]]\nname = \"open\"\n",
-        );
-        ws.nested("priv", "[[subgraph]]\nname = \"child-of-priv\"\nvisibility = \"public\"\n");
-
-        let cfg = ws.materialized(false, &[("pub", "public"), ("priv", "private")]);
-        let decls = load(&cfg).unwrap();
-        assert_eq!(
-            names(&decls),
-            vec!["pub", "priv", "secret", "local", "open", "child-of-priv"]
-        );
-        let by = |n: &str| decls.iter().find(|d| d.name == n).unwrap();
-        assert!(by("secret").is_private);
-        assert!(!by("local").is_private);
-        assert!(by("child-of-priv").is_private, "a private parent makes its children private");
-        let private = load_private_names(&cfg);
-        assert!(private.contains("secret") && private.contains("priv") && private.contains("child-of-priv"));
-        assert!(!private.contains("open"));
-
-        let cfg = ws.materialized(true, &[("pub", "public")]);
-        let decls = load(&cfg).unwrap();
-        assert_eq!(names(&decls), vec!["pub", "open"]);
-    }
-
-    #[test]
-    fn archived_orphan_self_missing_duplicate_and_cycles_are_skipped() {
-        let ws = Workspace::new();
-        ws.repo("a");
-        ws.repo("b");
-        ws.repo("dup");
-        ws.nested(
-            "a",
-            concat!(
-                "[[subgraph]]\nname = \"a\"\n",                        // the census line for itself
-                "[[subgraph]]\nname = \"old\"\narchived = true\n",     // archived: no checkout needed
-                "[[subgraph]]\nname = \"gone\"\norphan = true\n",
-                "[[subgraph]]\nname = \"never-cloned\"\n",             // no checkout
-                "[[subgraph]]\nname = \"b\"\n",
-                "[[subgraph]]\nname = \"dup\"\n",
-                "[[subgraph]]\nname = \"dup\"\n",                      // declared twice
-                "[[subgraph]]\nname = \"also-a\"\npath = \"../a\"\n", // the same checkout again
-            ),
-        );
-        ws.nested("b", "[[subgraph]]\nname = \"a\"\n"); // b claims a: a cycle
-        let cfg = ws.materialized(false, &[("a", "public")]);
-        let decls = load(&cfg).unwrap();
-        assert_eq!(names(&decls), vec!["a", "b", "dup"]);
-    }
-
-    #[test]
-    fn a_broken_nested_file_is_a_warning_not_a_failure() {
-        let ws = Workspace::new();
-        ws.repo("a");
-        ws.nested("a", "[[subgraph]\nname = ");
-        let cfg = ws.materialized(false, &[("a", "public")]);
-        let decls = load(&cfg).unwrap();
-        assert_eq!(names(&decls), vec!["a"]);
-    }
-
-    #[test]
-    fn root_entries_are_unchanged_without_nested_files() {
-        let ws = Workspace::new();
-        ws.repo("solo");
-        let cfg = ws.materialized(false, &[("solo", "private")]);
-        let decls = load(&cfg).unwrap();
-        assert_eq!(decls.len(), 1);
-        assert_eq!(decls[0].mount, "solo");
-        assert!(decls[0].is_private);
-        assert!(decls[0].menu);
-    }
-}
+mod tests;
