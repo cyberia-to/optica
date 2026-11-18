@@ -14,6 +14,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Serve `output_dir`, optionally with the live-reload watcher.
+///
+/// `build_done` is the flag of an initial full build still running in another
+/// thread: the watcher buffers events from the start but waits for it before
+/// warming up its cache. A caller that passes `Some` must set it on every exit
+/// of that thread, panic included, or the watcher never warms up.
 pub fn serve(
     config: &SiteConfig,
     bind: &str,

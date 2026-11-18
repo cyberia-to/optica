@@ -266,10 +266,22 @@ fn main() -> Result<()> {
                 let subs = subgraphs.clone();
                 let done = build_done.clone();
                 std::thread::spawn(move || {
-                    if let Err(e) = build_site(&cfg, quiet, subs.as_deref()) {
-                        eprintln!("initial build failed: {e:#}");
-                    }
+                    // The watcher waits on this flag before its warm-up, so it
+                    // has to be set on every exit of this thread. A panic inside
+                    // the build would skip the store and hang the watcher's
+                    // warm-up forever — live reload silently dead — so catch it.
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        build_site(&cfg, quiet, subs.as_deref())
+                    }));
                     done.store(true, std::sync::atomic::Ordering::SeqCst);
+                    match outcome {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => eprintln!("initial build failed: {e:#}"),
+                        Err(_) => eprintln!(
+                            "initial build panicked; the served snapshot is the old one, \
+                             live reload will rebuild on the next change"
+                        ),
+                    }
                 });
             }
 
