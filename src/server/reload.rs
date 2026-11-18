@@ -591,6 +591,13 @@ fn try_fast_path(
         if !path.exists() {
             return None; // File was deleted — need full scan
         }
+        // A subgraph's own census changed: its children may have come or
+        // gone, which only the full path (decls reloaded, ingest) can see.
+        if path.file_name().and_then(|n| n.to_str())
+            == Some(crate::scanner::subgraph_config::NESTED_FILE)
+        {
+            return None;
+        }
         let sg = cache.subgraph_repo_by_name.iter()
             .find(|(_, repo)| path.starts_with(repo))
             .map(|(name, _)| name.clone());
@@ -859,6 +866,16 @@ fn incremental_rebuild(
     // contain thousands of files (cyb: 4417, pussy-ts: 1209); re-ingesting all
     // 27 on any spurious write was the source of 30-60s "live" reload times.
     let subgraph_decls = crate::scanner::subgraph::load_subgraph_decls(subgraphs_path)?;
+    // A nested subgraphs.toml may have gained or lost a private child since
+    // the set was read at startup, so the privacy of this rebuild is the
+    // privacy of the decls just reloaded.
+    if subgraphs_path.is_some() {
+        cache.private_subgraph_names = subgraph_decls
+            .iter()
+            .filter(|d| d.is_private)
+            .map(|d| d.name.clone())
+            .collect();
+    }
     if !subgraph_decls.is_empty() {
         let subgraph_namespaces: Vec<String> =
             subgraph_decls.iter().map(|d| d.name.clone()).collect();
