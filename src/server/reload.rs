@@ -10,9 +10,11 @@ use anyhow::Result;
 use colored::Colorize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, SystemTime};
+
+mod warmup;
 
 /// Reload script with the server's current build version baked in.
 /// Without this, a freshly-loaded page starts at knownVersion = 0;
@@ -158,9 +160,10 @@ pub fn start_watch_rebuild(
     config: SiteConfig,
     build_version: Arc<AtomicU64>,
     subgraphs_path: Option<PathBuf>,
+    build_done: Option<Arc<AtomicBool>>,
 ) {
     std::thread::spawn(move || {
-        if let Err(e) = watch_and_rebuild_loop(&config, &build_version, subgraphs_path.as_deref()) {
+        if let Err(e) = watch_and_rebuild_loop(&config, &build_version, subgraphs_path.as_deref(), build_done) {
             eprintln!("  {} File watcher error: {}", "Error".red(), e);
         }
     });
@@ -170,6 +173,7 @@ fn watch_and_rebuild_loop(
     config: &SiteConfig,
     build_version: &Arc<AtomicU64>,
     subgraphs_path: Option<&Path>,
+    build_done: Option<Arc<AtomicBool>>,
 ) -> Result<()> {
     use notify::Watcher;
 
@@ -256,6 +260,11 @@ fn watch_and_rebuild_loop(
             watcher.watch(&decl.repo_path, notify::RecursiveMode::Recursive)?;
         }
     }
+
+    // Wait out the initial full build before warming up: its final write
+    // overwrites every page from the bytes it scanned at its start, so a
+    // warm-up running earlier hashes bytes that are about to go stale.
+    warmup::wait_for_initial_build(build_done.as_ref());
 
     let mut cache = BuildCache::new();
     if let Some(path) = subgraphs_path {
@@ -380,8 +389,15 @@ fn watch_and_rebuild_loop(
     let output_canon = config.build.output_dir.canonicalize()
         .unwrap_or_else(|_| config.build.output_dir.clone());
 
+    // Events buffered while the build and the warm-up ran name files whose
+    // pages were written from older bytes; the cache has to forget them so the
+    // first pass below re-renders them from the current ones.
+    let mut pending = warmup::drain_buffered(&rx);
+    warmup::forget_late_events(&mut cache, &pending);
+
     loop {
-        if let Ok(paths) = rx.recv() {
+        let received = if pending.is_empty() { rx.recv() } else { Ok(std::mem::take(&mut pending)) };
+        if let Ok(paths) = received {
             // Debounce: wait 100ms and collect all changed paths
             std::thread::sleep(Duration::from_millis(100));
             let mut changed: HashSet<PathBuf> = paths.into_iter().collect();
