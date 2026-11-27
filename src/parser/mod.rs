@@ -131,7 +131,12 @@ pub fn slugify_page_name(name: &str) -> PageId {
     // macOS HFS+/APFS limit: 255 bytes per path component;
     // leave room for /index.html in pretty URL mode
     if slug.len() > 200 {
-        slug.truncate(200);
+        // cut on a letter's edge: byte 200 of a Cyrillic or Chinese name falls inside a letter
+        let mut cut = 200;
+        while !slug.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        slug.truncate(cut);
         slug = slug
             .split('/')
             .map(sanitize_slug_component)
@@ -815,6 +820,13 @@ pub fn merge_subgraph_content(root_md: &str, subgraph_name: &str, readme_md: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_name_in_two_byte_letters_is_cut_on_a_letter() {
+        // 2026-11-27: one such page stopped the whole graph from building
+        let slug = slugify_page_name(&format!("a{}", "я".repeat(150)));
+        assert!(slug.len() <= 200 && slug.ends_with('я'));
+    }
 
     #[test]
     fn test_slugify() {
